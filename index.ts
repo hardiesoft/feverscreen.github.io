@@ -1606,7 +1606,7 @@ function advanceScreeningState(nextState: ScreeningState, prevState: ScreeningSt
 }
 
 (async function main() {
-
+    const frameBuffer = new ArrayBuffer(160 * 120 * 2);
     const dropZone = document.getElementById('drop') as HTMLDivElement;
     // Setup drop zone
     dropZone.addEventListener('drop', async (event: DragEvent) => {
@@ -1617,10 +1617,7 @@ function advanceScreeningState(nextState: ScreeningState, prevState: ScreeningSt
                 if (event.dataTransfer.items[i].kind === 'file') {
                     let file = event.dataTransfer.items[i].getAsFile() as File;
                     const buffer = await file.arrayBuffer();
-                    if (i === 0) {
-                        (dropZone.parentElement as HTMLElement).removeChild(dropZone);
-                    }
-                    await renderFile(buffer);
+                    await renderFile(buffer, frameBuffer);
                 }
             }
         }
@@ -1652,17 +1649,22 @@ function advanceScreeningState(nextState: ScreeningState, prevState: ScreeningSt
     //     // "/cptv-files/20200729.104543.646.cptv",
     //     // "/cptv-files/20200729.105053.858.cptv"
     // ];
+    // const files: string[] = [
+    //     "/cptv-files/bunch of people downstairs 20200812.160746.324.cptv"
+    // ];
     // for (const file of files) {
     //     const cptvFile = await fetch(file);
     //     const buffer = await cptvFile.arrayBuffer();
-    //     renderFile(buffer);
-    //     //}
+    //     await renderFile(buffer, frameBuffer);
     // }
 }());
 
 
-async function renderFile(buffer: ArrayBuffer) {
-    const frameBuffer = new ArrayBuffer(160 * 120 * 2);
+async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
+    const dropZone = document.getElementById("drop");
+    if (dropZone) {
+        (dropZone.parentElement as HTMLElement).removeChild(dropZone);
+    }
     cptvPlayer.initWithCptvData(new Uint8Array(buffer));
     let frameNumber = -1;
     const seenFrames = new Set();
@@ -1689,7 +1691,7 @@ async function renderFile(buffer: ArrayBuffer) {
         // Now do smoothing...
         smooth.smooth(frame, 16);
         const thresholded = smooth.getThresholded();
-        const radialSmoothed = smooth.getRadialSmoothed();
+        const radialSmoothed = new Float32Array(smooth.getRadialSmoothed());
         const medianSmoothed = smooth.getMedianSmoothed();
         const {min, max, threshold} = smooth.getHeatStats();
         const histogram = smooth.getHistogram();
@@ -1702,6 +1704,10 @@ async function renderFile(buffer: ArrayBuffer) {
             120,
             160
         );
+
+        // Now we'd like to do edge detection around the thermal ref to try and find the box and exclude it.
+        // We know the approx dimensions of the thermal ref box, just need to work out orientation etc.
+
         let stats;
         let thermalRefRaw = 0;
         let thermalRefC = 38;
@@ -1729,8 +1735,9 @@ async function renderFile(buffer: ArrayBuffer) {
         canvas.height = HEIGHT;
         canvas.addEventListener('mousemove', (e) => {
             const rect = (e.target as HTMLElement).getBoundingClientRect();
-            const x = e.clientX - rect.x;
-            const y = e.clientY - rect.y;
+            const x = Math.min(e.clientX - rect.x, 119);
+            const y = Math.min(e.clientY - rect.y, 159);
+
             const index = y * 120 + x;
             const val = radialSmoothed[index];
             // TODO(jon): Double, and triple check this temperature calculation!
