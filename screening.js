@@ -78,5 +78,9 @@ export const ScreeningAcceptanceStates = {
     ],
     [ScreeningState.STABLE_LOCK]: [ScreeningState.LEAVING],
     [ScreeningState.LEAVING]: [ScreeningState.READY],
-    [ScreeningState.MISSING_THERMAL_REF]: [ScreeningState.READY],
+    [ScreeningState.MISSING_THERMAL_REF]: [
+        ScreeningState.READY,
+        ScreeningState.TOO_FAR,
+        ScreeningState.LARGE_BODY
+    ],
 };

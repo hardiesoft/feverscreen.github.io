@@ -321,7 +321,7 @@ export function detectThermalReference(saltPepperData, smoothedData, previousThe
         return previousThermalReference;
     }
     const [bestRadius, bestX, bestY] = circleDetect(edgeData, frameWidth, frameHeight);
-    if (bestRadius <= 0) {
+    if (bestRadius <= 4 || bestRadius >= 6) {
         return null;
     }
     const r = new ROIFeature();

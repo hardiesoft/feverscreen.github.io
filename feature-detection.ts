@@ -472,7 +472,7 @@ export function detectThermalReference(
         frameHeight
     );
 
-    if (bestRadius <= 0) {
+    if (bestRadius <= 4 || bestRadius >= 6) {
         return null;
     }
     const r = new ROIFeature();

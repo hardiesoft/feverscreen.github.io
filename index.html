@@ -10,7 +10,7 @@
         }
         canvas {
             image-rendering: pixelated;
-            outline: 1px solid rgba(100, 100 ,100, 0.1);
+            outline: 1px solid rgba(100, 100, 100, 0.1);
             margin-right: 0;
             padding:0;
             margin-top: 0;
@@ -75,14 +75,17 @@
             top: 190px;
             padding: 0 2px;
         }
-        .bg {
+        .bg, .bg2 {
+            opacity: 1;
+        }
+        .edge {
             opacity: 1;
         }
         .threshold {
-            opacity: 1;
+            opacity: 0.5;
         }
         .analysis {
-            opacity: 1;
+            opacity: 0;
         }
         canvas.histogram {
             top: 160px;
