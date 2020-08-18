@@ -1204,8 +1204,35 @@ function allNeighboursEqual(x, y, data, bit) {
         left === bit &&
         topLeft === bit);
 }
-function drawImage(canvas, data) {
+function distToSegmentSquared(p, v, w) {
+    const l2 = distanceSq(v, w);
+    if (l2 == 0) {
+        return distanceSq(p, v);
+    }
+    let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return distanceSq(p, { x: v.x + t * (w.x - v.x), y: v.y + t * (w.y - v.y) });
+}
+function directionOfSet(set) {
+    // What's a good way to get the current average direction?
+    // This is "least squares"
+    const meanX = set.reduce((acc, { x }) => acc + x, 0) / set.length;
+    const meanY = set.reduce((acc, { y }) => acc + y, 0) / set.length;
+    let num = 0;
+    let den = 0;
+    for (const p of set) {
+        num += (p.x - meanX) * (p.y - meanY);
+        den += (p.x - meanX) ** 2;
+    }
+    const gradient = num / den;
+    const yIntercept = meanY - gradient * meanX;
+    //return {x: gradient, y: yIntercept};
+    return { v: normalise({ x: 1, y: gradient }), y: yIntercept };
+}
+const pointIsInSet = (pt, set) => set.find(x => x.x === pt.x && x.y === pt.y) !== undefined;
+function drawImage(canvas, canvas2, data) {
     const ctx = canvas.getContext('2d');
+    const ctx2 = canvas2.getContext('2d');
     const imageData = new ImageData(new Uint8ClampedArray(160 * 120 * 4), 120, 160);
     const image = new Uint32Array(imageData.data.buffer);
     const edgePoints = [];
@@ -1220,7 +1247,7 @@ function drawImage(canvas, data) {
                 if (!allNeighboursEqual(x, y, data, motionBit)) {
                     opened = true;
                     image[i] = 0xff00ffff;
-                    edgePoints.push({ x, y, d: 0 });
+                    edgePoints.push({ x, y });
                 }
             }
             else if (v & motionBit && v & thresholdBit && prev === motionBit) {
@@ -1228,7 +1255,7 @@ function drawImage(canvas, data) {
                 if (!allNeighboursEqual(x, y, data, motionBit)) {
                     opened = true;
                     image[i] = 0xff00ffff;
-                    edgePoints.push({ x, y, d: 0 });
+                    edgePoints.push({ x, y });
                 }
             }
             else if (v & motionBit && v && thresholdBit && v & edgeBit) {
@@ -1250,13 +1277,13 @@ function drawImage(canvas, data) {
                     if (prev & motionBit && prev && thresholdBit && prev & edgeBit) {
                         if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
                             image[i - 1] = 0xff00ffff; // Red
-                            edgePoints.push({ x: x - 1, y, d: 0 });
+                            edgePoints.push({ x: x - 1, y });
                         }
                     }
                     else if (prev & motionBit && prev & thresholdBit) {
                         if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
                             image[i - 1] = 0xff00ffff; // Blue
-                            edgePoints.push({ x: x - 1, y, d: 0 });
+                            edgePoints.push({ x: x - 1, y });
                         }
                     }
                     //opened = false;
@@ -1272,26 +1299,184 @@ function drawImage(canvas, data) {
             prev = v;
         }
     }
-    // Weight edge points based on their distance from other points.  Remove points with too far distance?
-    // Work out connectedness of points.
-    for (let i = 0; i < edgePoints.length; i++) {
-        const tP = edgePoints[i];
-        for (let j = 0; j < edgePoints.length; j++) {
-            if (i !== j) {
-                const tPP = edgePoints[j];
-                // There's a max distance from other points to be part of a set?
-                const d = distance({ x: tP.x, y: tP.y }, { x: tPP.x, y: tPP.y });
-                tP.d += d;
+    edgePoints.sort((a, b) => {
+        const cmp = a.y - b.y;
+        if (cmp === 0) {
+            return a.x - b.x;
+        }
+        return cmp;
+    });
+    const distanceThreshold = 5 * 5;
+    const start = performance.now();
+    if (edgePoints.length) {
+        const edgePSet = new Set();
+        for (const p of edgePoints) {
+            edgePSet.add(p);
+        }
+        // Take first point, then scan through y and split into sets?
+        let sets = [[edgePoints[0]]];
+        for (const pt of edgePSet) {
+            let matchedPrevSet = false;
+            for (const set of sets) {
+                const lastP = set[set.length - 1];
+                if (distanceSq(lastP, pt) < distanceThreshold && !pointIsInSet(pt, set)) {
+                    set.push(pt);
+                    edgePSet.delete(pt);
+                    matchedPrevSet = true;
+                    break;
+                }
+            }
+            if (matchedPrevSet) {
+                continue;
+            }
+            if (pt.y < 159) {
+                for (const set of sets) {
+                    // TODO(jon): First look further ray-casting in the direction of the current set line/average.
+                    // get the current average direction vector.
+                    if (pointIsInSet(pt, set)) {
+                        continue;
+                    }
+                    if (set.length > 2) {
+                        // TODO(jon): Do we need to make this part of the set start from a zero origin for this to work
+                        //  properly?
+                        // TODO(jon): Detect the case where the segment is a straight line in x or y.
+                        const slice = set.slice(0, Math.min(5, set.length - 1));
+                        const firstX = slice[0].x;
+                        const firstY = slice[0].y;
+                        let sameX = true;
+                        let sameY = true;
+                        for (const p of slice.slice(1)) {
+                            if (p.x !== firstX) {
+                                sameX = false;
+                            }
+                            if (p.y !== firstY) {
+                                sameY = false;
+                            }
+                        }
+                        let dir;
+                        if (sameX) {
+                            dir = { x: 0, y: 1 };
+                        }
+                        else if (sameY) {
+                            dir = { x: 1, y: 0 };
+                        }
+                        else {
+                            const dd = directionOfSet(slice);
+                            //console.log(dd);
+                            dir = dd.v;
+                        }
+                        const startP = set[set.length - 1];
+                        //console.log('searching from ', startP, 'to join with ', pt, 'in ', dir);
+                        // Now ray-cast until we find something, or get too far away.
+                        // We should be trying to find an existing edge to join 'curr' to.
+                        // Maybe make a long line in the direction dir, and then look to see if at any stage
+                        // curr is < threshold distance from the line?
+                        const endP = add(startP, scale(dir, distanceThreshold));
+                        console.log("searching for match to", pt, 'from startP', startP);
+                        if (distToSegmentSquared(pt, startP, endP) < distanceThreshold) {
+                            ctx2.save();
+                            ctx2.beginPath();
+                            ctx2.strokeStyle = 'red';
+                            ctx.lineWidth = 0.5;
+                            ctx2.moveTo(startP.x, startP.y);
+                            ctx2.lineTo(endP.x, endP.y);
+                            ctx2.stroke();
+                            ctx2.beginPath();
+                            ctx2.fillStyle = 'blue';
+                            ctx2.arc(endP.x, endP.y, 1, 0, Math.PI * 2);
+                            ctx2.fill();
+                            ctx2.restore();
+                            // TODO(jon): Once we've found a join point, we can continue adding greedily from that
+                            //  point.
+                            console.log('joining', startP, pt);
+                            edgePSet.delete(pt);
+                            matchedPrevSet = true;
+                            set.push(pt);
+                            // TODO(jon): This doesn't seem to be breaking properly?
+                            break;
+                        }
+                    }
+                }
+                if (!matchedPrevSet) {
+                    // Start a new set with curr
+                    edgePSet.delete(pt);
+                    sets.push([pt]);
+                }
             }
         }
+        // TODO(jon): At the end go through each length from the start, and try and merge sets to the ends of other lengths.
+        // At least, if two line set end-points are within 10px of each other, join them up?
+        let all = sets.filter(s => s.length > 3);
+        let allS = new Set();
+        for (const set of all) {
+            allS.add(set);
+        }
+        {
+            // Merging sets
+            // for (const a of allS) {
+            //     const startA = a[0];
+            //     const endA = a[a.length - 1];
+            //     for (const b of allS) {
+            //         if (a !== b) {
+            //             const startB = b[0];
+            //             const endB = b[b.length - 1];
+            //             if (
+            //                 distanceSq(startA, startB) < 100 ||
+            //                 distanceSq(startA, endB) < 100 ||
+            //                 distanceSq(endA, startB) < 100 ||
+            //                 distanceSq(endA, endB) < 100
+            //             ) {
+            //                 // merge.
+            //                 allS.delete(b);
+            //                 a.push(...b);
+            //             }
+            //         }
+            //     }
+            // }
+        }
+        // console.log(sets.reduce((acc, s) => acc + s.length, 0), edgePoints.length);
+        // console.log(sets);
+        const colors = [
+            0xffff00ff,
+            0xff0000ff,
+            0xffff0000,
+            0xff0000ff,
+            0xff00ff00,
+            0xff000000,
+            0xffff00ff,
+            0xffff00ff,
+        ];
+        let c = 0;
+        for (const set of allS) {
+            const color = colors[c % colors.length];
+            for (const { x, y } of set) {
+                image[y * 120 + x] = color;
+            }
+            c++;
+            // Now try to join the sets, based on extending vectors from the ends of lines, and trying to make them
+            // meet up to close gaps.
+            // We really want to get rid of dis-joint sets in x
+        }
     }
+    const end = performance.now();
+    console.log('matching', end - start);
+    // Weight edge points based on their distance from other points.  Remove points with too far distance?
+    // Work out connectedness of points.
+    // for (let i = 0; i < edgePoints.length; i++) {
+    //     const tP = edgePoints[i];
+    //     for (let j = 0; j < edgePoints.length; j++) {
+    //         if (i !== j) {
+    //             const tPP = edgePoints[j];
+    //             // There's a max distance from other points to be part of a set?
+    //             const d = distance({x: tP.x, y: tP.y}, {x: tPP.x, y: tPP.y});
+    //             tP.d += d;
+    //         }
+    //     }
+    // }
     // Maybe make a connectivity graph, and prune branches of the graph that aren't long enough?
-    edgePoints.sort((a, b) => (b.d - a.d));
+    //edgePoints.sort((a, b) => (b.d - a.d));
     // Histogram the points, and work out where to slice?
     //console.log(edgePoints);
-    for (const { x, y } of edgePoints.slice(50)) {
-        image[y * 120 + x] = 0xff0000ff;
-    }
     ctx.putImageData(imageData, 0, 0);
 }
 function drawImage2(canvas, data, min, max) {
@@ -1437,6 +1622,44 @@ function advanceScreeningState(nextState, prevState, currentCount) {
         await renderFile(buffer, frameBuffer);
     }
 }());
+/*
+(async function m() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 120;
+    canvas.height = 160;
+    document.body.appendChild(canvas);
+    const dropZone = document.getElementById('drop') as HTMLDivElement;
+    dropZone.parentElement.removeChild(dropZone);
+    const points = [
+        {x: 10, y: 10},
+        {x: 20, y: 10},
+        {x: 50, y: 20},
+        {x: 50, y: 60},
+        {x: 14, y: 30},
+        {x: 13, y: 5},
+        {x: 13, y: 0},
+        {x: 70, y: 10},
+    ];
+
+    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    ctx.fillStyle = 'red';
+    for (const point of points) {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 1,0, Math.PI * 2);
+        ctx.fill();
+    }
+    const line = directionOfSet(points);
+    ctx.strokeStyle = 'blue';
+    ctx.beginPath();
+    console.log(line);
+    ctx.moveTo(0, line.y);
+    const vec = add({x: 0, y: line.y}, scale(normalise({x: 1, y: line.x}), 150));
+    ctx.lineTo(vec.x, vec.y);
+    //ctx.arc(line.x, line.y, 1,0, Math.PI * 2);
+    ctx.stroke();
+
+}())
+ */
 async function renderFile(buffer, frameBuffer) {
     const dropZone = document.getElementById("drop");
     if (dropZone) {
@@ -1570,7 +1793,7 @@ async function renderFile(buffer, frameBuffer) {
         thresholdCanvas.className = 'threshold';
         thresholdCanvas.width = WIDTH;
         thresholdCanvas.height = HEIGHT;
-        drawImage(thresholdCanvas, im);
+        drawImage(thresholdCanvas, analysisCanvas, im);
         const hist = document.createElement("canvas");
         hist.className = "histogram";
         hist.width = WIDTH;
@@ -1605,12 +1828,14 @@ async function renderFile(buffer, frameBuffer) {
             //drawShapes([body], frameInfo.frame_number, canvas);
             face = extractFaceInfo(extendToBottom(body), radialSmoothed, analysisCanvas, maybeHasGlasses);
             if (face) {
+                /*
                 ctx.lineWidth = 1;
                 ctx.strokeStyle = 'red';
                 ctx.beginPath();
                 ctx.moveTo(face.head.leftNeckSpan.x0, face.head.leftNeckSpan.y);
                 ctx.lineTo(face.head.rightNeckSpan.x1, face.head.rightNeckSpan.y);
                 ctx.stroke();
+                 */
             }
         }
         if (seenBody) {
@@ -1672,8 +1897,8 @@ async function renderFile(buffer, frameBuffer) {
                 const headBounds = boundsForConvexHull(hulledHead);
                 const left = closestPoint({ x: headBounds.x0, y: headBounds.y1 }, hulledHead);
                 const right = closestPoint({ x: headBounds.x1, y: headBounds.y1 }, hulledHead);
-                drawPoint(left, analysisCanvas);
-                drawPoint(right, analysisCanvas);
+                // drawPoint(left, analysisCanvas);
+                // drawPoint(right, analysisCanvas);
                 const startIndexHead = hulledHead.indexOf(left); //, hulledHead.indexOf(right));
                 const endIndexHead = hulledHead.indexOf(right);
                 //const torsoLeft = closestPoint(left, hulledTorso);
@@ -1759,7 +1984,8 @@ async function renderFile(buffer, frameBuffer) {
             ctx.arc(thermalReference.midX(), thermalReference.midY(), (thermalReference.x1 - thermalReference.x0) * 0.5, 0, Math.PI * 2);
             ctx.fill();
         }
-        textState.innerHTML = `#${frameNumber}, ${screeningState}(${screeningStateCount})<br>${seenBody && advanced.event ? `${(startTime / 1000).toFixed(2)}s elapsed` : ''}<br>${advanced.event}`; //  ${face?.halfwayRatio}
+        textState.innerHTML = `#${frameNumber}, ${screeningState}(${screeningStateCount})<br>${seenBody && advanced.event ? `${(startTime / 1000).toFixed(2)}s elapsed` : ''}<br>${advanced.event}<br>
+Threshold ${(thermalRefC + (threshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;`; //  ${face?.halfwayRatio}
         // Write the screening state out to a text block.
     }
 }
