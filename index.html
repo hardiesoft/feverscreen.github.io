@@ -19,7 +19,7 @@
         .c-container {
             position: relative;
             width: 120px;
-            height: 280px;
+            height: 300px;
             float: left;
             outline: 1px solid aliceblue;
         }
@@ -40,7 +40,7 @@
             user-select: none;
         }
         .c-container:not(.READY) {
-            background: rgba(0, 200, 0, 0.3);
+            background: rgba(50, 0, 240, 0.7);
         }
         .c-container.FRONTAL_LOCK {
             background: rgba(0, 200, 0, 0.5);
@@ -79,25 +79,40 @@
             top: 190px;
             padding: 0 2px;
         }
-        .bg, .bg2 {
+        .on {
             opacity: 1;
         }
-        .edge {
-            opacity: 1;
-        }
-        .threshold {
-            opacity: 0.5;
-        }
-        .analysis {
-            opacity: 0.5;
+        .off {
+            opacity: 0;
         }
         canvas.histogram {
             top: 160px;
+        }
+        button.active {
+            opacity: 1;
+        }
+        button:not(.active) {
+            opacity: 0.5;
+        }
+        body {
+            position: absolute;
+        }
+        nav {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
         }
     </style>
     <script src="/index.js" type="module"></script>
 </head>
 <body>
+<nav>
+    <button id="toggle-bg" class="active">background</button>
+    <button id="toggle-motion" class="active">motion</button>
+    <button id="toggle-threshold" class="active">threshold</button>
+    <button id="toggle-edges" class="active">edges</button>
+    <button id="toggle-analysis" class="active">analysis</button>
+</nav>
 <div id="drop">
     <p id="instructions">Drop a CPTV file here</p>
 </div>

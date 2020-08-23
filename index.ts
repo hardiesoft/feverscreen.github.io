@@ -1,8 +1,11 @@
 import * as cptvPlayer from './cptv-player/cptv_player.js';
 import * as smooth from "./smooth/smooth.js";
 import * as curveFit from "./curve-fit/curve_fitting.js";
+import {concaveman, fastConvexHull} from "./concaveman.js";
+import DBScan from "./dbscan.js";
 import {detectThermalReference, edgeDetect, extractSensorValueForCircle, ROIFeature} from "./feature-detection.js";
 import {ScreeningAcceptanceStates, ScreeningState} from './screening.js';
+import has = Reflect.has;
 
 const motionBit = 1 << 7;
 const thresholdBit = 1 << 6;
@@ -513,6 +516,10 @@ function shapeArea(shape: Shape): number {
     return shape.reduce((acc, span) => acc + spanWidth(span), 0);
 }
 
+function rawShapeArea(shape: RawShape): number {
+    return Object.values(shape).reduce((acc, span) => acc + shapeArea(span), 0);
+}
+
 function largestShape(shapes: Shape[]): Shape {
     return shapes.reduce((prevBestShape: Shape, shape: Shape) => {
         const best = shapeArea(prevBestShape);
@@ -531,6 +538,22 @@ function boundsForShape(shape: Shape): Rect {
     const x0 = Math.min(...shape.map(({ x0 }) => x0));
     const x1 = Math.max(...shape.map(({ x1 }) => x1));
     return { x0, x1, y0, y1 };
+}
+
+function boundsForRawShape(shape: RawShape): Rect {
+    let minY = Number.MAX_SAFE_INTEGER;
+    let maxY = 0;
+    let minX = Number.MAX_SAFE_INTEGER;
+    let maxX = 0;
+    for (const row of Object.values(shape)) {
+        for (const span of row) {
+            minY = Math.min(span.y, minY);
+            maxY = Math.max(span.y, maxY);
+            minX = Math.min(span.x0, minX);
+            maxX = Math.max(span.x1, maxX);
+        }
+    }
+    return { x0: minX, y0: minY, y1: maxY, x1: maxX };
 }
 
 function shapeIsNotCircular(shape: Shape): boolean {
@@ -879,7 +902,7 @@ function drawConvexShape(convexHull: ConvexHull, frameNum: number, canvas: HTMLC
     //ctx.lineTo(convexHull[0].x, convexHull[0].y);
 }
 
-function drawShapes(shapes: Shape[], frameNum: number, canvas: HTMLCanvasElement) {
+function drawShapes(shapes: Shape[], frameNum: number, canvas: HTMLCanvasElement, color:number = 0x33ff00ff) {
     const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
     const width = canvas.width;
     const height = canvas.height;
@@ -888,21 +911,88 @@ function drawShapes(shapes: Shape[], frameNum: number, canvas: HTMLCanvasElement
     for (let i = 0; i < data.length; i++) {
         data[i] = 0x00000000;
     }
-    const shape = largestShape(shapes);
-    for (const span of shape) {
-        let i = span.x0;
-        if (span.x0 >= span.x1) {
-            console.warn("Weird spans", span.x0, span.x1);
-            continue;
+    //const shape = largestShape(shapes);
+    for (const shape of shapes) {
+        for (const span of shape) {
+            let i = span.x0;
+            if (span.x0 >= span.x1) {
+                console.warn("Weird spans", span.x0, span.x1);
+                continue;
+            }
+            do {
+                data[span.y * width + i] = color;
+                i++;
+            } while (i < span.x1);
         }
-        do {
-            data[span.y * width + i] = 0x33ffff00;
-            i++;
-        } while (i < span.x1);
     }
     ctx.putImageData(img, 0, 0);
-
 }
+
+function drawRawShapes(shapes: RawShape[], frameNum: number, canvas: HTMLCanvasElement, color:number = 0x33ff00ff) {
+    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    const width = canvas.width;
+    const height = canvas.height;
+    const img = ctx.getImageData(0, 0, width, height);
+    const data = new Uint32Array(img.data.buffer);
+    for (let i = 0; i < data.length; i++) {
+        data[i] = 0x00000000;
+    }
+    //const shape = largestShape(shapes);
+    for (const shape of shapes) {
+        for (const row of Object.values(shape)) {
+            for (const span of row) {
+                let i = span.x0;
+                if (span.x0 >= span.x1) {
+                    console.warn("Weird spans", span.x0, span.x1);
+                    continue;
+                }
+                do {
+                    data[span.y * width + i] = color;
+                    i++;
+                } while (i < span.x1);
+            }
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+}
+
+
+function drawRawShapesIntoMask(shapes: RawShape[], data: Uint8Array, bit: number) {
+    const width = 120;
+    for (const shape of shapes) {
+        for (const row of Object.values(shape)) {
+            for (const span of row) {
+                let i = span.x0;
+                if (span.x0 >= span.x1) {
+                    console.warn("Weird spans", span.x0, span.x1);
+                    continue;
+                }
+                do {
+                    data[span.y * width + i] |= bit;
+                    i++;
+                } while (i < span.x1);
+            }
+        }
+    }
+}
+
+function drawShapesIntoMask(shapes: Shape[], data: Uint8Array, bit: number) {
+    const width = 120;
+    for (const shape of shapes) {
+        for (const span of shape) {
+            let i = span.x0;
+            if (span.x0 >= span.x1) {
+                console.warn("Weird spans", span.x0, span.x1);
+                continue;
+            }
+            do {
+                data[span.y * width + i] |= bit;
+                i++;
+            } while (i < span.x1);
+        }
+    }
+}
+
 export type RawShape = Record<number, Span[]>;
 
 
@@ -939,18 +1029,19 @@ function mergeShapes(shape: RawShape, other: RawShape) {
 export function getRawShapes(
     thresholded: Uint8Array,
     width: number,
-    height: number
+    height: number,
+    maskBit: number = 255
 ): RawShape[] {
     const shapes = [];
     for (let y = 0; y < height; y++) {
         let span = { x0: -1, x1: width, y, h: 0 };
         for (let x = 0; x < width; x++) {
             const index = y * width + x;
-            if (thresholded[index] === 255 && span.x0 === -1) {
+            if (thresholded[index] & maskBit && span.x0 === -1) {
                 span.x0 = x;
             }
-            if (span.x0 !== -1 && (thresholded[index] === 0 || x === width - 1)) {
-                if (x === width - 1 && thresholded[index] !== 0) {
+            if (span.x0 !== -1 && (!(thresholded[index] & maskBit) || x === width - 1)) {
+                if (x === width - 1 && thresholded[index] & maskBit) {
                     span.x1 = width;
                 } else {
                     span.x1 = x;
@@ -1381,7 +1472,7 @@ export function preprocessShapes(frameShapes: RawShape[], frameNumber: number, t
 
             // TODO(jon): Can also check to see if the top of a shape is flat, or if the side is flat too etc.
             if (ratioFilled > 0.9) {
-                return false;
+                //return false;
             }
 
             const maxVariance = 5;
@@ -1393,27 +1484,28 @@ export function preprocessShapes(frameShapes: RawShape[], frameNumber: number, t
             );
         });
     }
+    shapes = shapes.filter(isNotCeilingHeat);
 
     // TODO(jon): Exclude the thermal reference first.
     let {shapes: mergedShapes, didMerge} = mergeHeadParts(shapes, frameNumber);
     return (
         {shapes: mergedShapes
-            .filter(shape => {
-                const area = shapeArea(shape);
-                const noLargeShapes =
-                    shapes.filter(x => shapeArea(x) > 300).length === 0;
-                const isLargest = shape == largestShape(mergedShapes);
-                return (
-                    area > 600 ||
-                    (noLargeShapes &&
-                        isLargest &&
-                        shapeIsOnSide(shape) &&
-                        shapeIsNotCircular(shape))
-                );
-            })
-            .filter(isNotCeilingHeat)
-            .map(markWidest)
-            .map(markNarrowest)
+            // .filter(shape => {
+            //     const area = shapeArea(shape);
+            //     const noLargeShapes =
+            //         shapes.filter(x => shapeArea(x) > 300).length === 0;
+            //     const isLargest = shape == largestShape(mergedShapes);
+            //     return (
+            //         area > 600 ||
+            //         (noLargeShapes &&
+            //             isLargest &&
+            //             shapeIsOnSide(shape) &&
+            //             shapeIsNotCircular(shape))
+            //     );
+            // })
+            //.filter(isNotCeilingHeat)
+            // .map(markWidest)
+            // .map(markNarrowest)
             .filter(mergedShapes => mergedShapes.length),
             didMerge
         }
@@ -1436,9 +1528,9 @@ export function sobelX(
 }
 
 
-function subtractFrame(frame: Float32Array, prevFrame: Float32Array | null, motionBit: number): {m: number, mx: number, im: Uint8Array} {
+function subtractFrame(frame: Float32Array, prevFrame: Float32Array | null, motionBit: number): {m: number, mx: number, motionMask: Uint8Array} {
     if (!prevFrame) {
-        return {im: new Uint8Array(frame), m: -1, mx: -1};
+        return {motionMask: new Uint8Array(frame), m: -1, mx: -1};
     } else {
         let m = Number.MAX_SAFE_INTEGER;
         let mx = 0;
@@ -1446,11 +1538,11 @@ function subtractFrame(frame: Float32Array, prevFrame: Float32Array | null, moti
         for (let i = 0; i < subtracted.length; i++) {
             // Also compare with sobel edges?
             // Then do a shrink-wrapped convex hull around the points we have.
-            if (Math.abs(frame[i] - prevFrame[i]) > 10) {
+            if (Math.abs(frame[i] - prevFrame[i]) > 20) {
                 subtracted[i] |= motionBit;
             }
         }
-        return {im: subtracted, m, mx };
+        return {motionMask: subtracted, m, mx };
     }
 }
 
@@ -1474,6 +1566,23 @@ function allNeighboursEqual(x: number, y: number, data: Uint8Array, bit: number)
         left === bit &&
         topLeft === bit
     );
+}
+
+function localDensity(x: number, y: number, data: Uint8Array, bit: number): number {
+    const x0 = Math.max(x - 2, 0);
+    const x1 = Math.min(x + 2, 119);
+    const y0 = Math.max(y - 2, 0);
+    const y1 = Math.min(y + 2, 159);
+    let sum = 0;
+    for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+            const index = y * 120 + x;
+            if (data[index] === bit) {
+                sum++;
+            }
+        }
+    }
+    return sum;
 }
 
 
@@ -1504,176 +1613,396 @@ function directionOfSet(set: Point[]): {v: Vec2, y: number} {
     return {v: normalise({x: 1, y: gradient}), y: yIntercept};
 }
 
-const pointIsInSet = (pt: Point, set: Point[]): boolean => set.find(x => x.x === pt.x && x.y === pt.y) !== undefined;
+const pointsAreEqual = (a: Point, b: Point): boolean => a.x === b.x && a.y === b.y;
+const pointIsInSet = (pt: Point, set: Point[]): boolean => set.find(x => pointsAreEqual(x, pt)) !== undefined;
 
-function drawImage(canvas: HTMLCanvasElement, canvas2: HTMLCanvasElement, data: Uint8Array) {
+function drawImage(canvas: HTMLCanvasElement, canvas2: HTMLCanvasElement, data: Uint8Array, frameNumber: number) {
     const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
     const ctx2 = canvas2.getContext('2d') as CanvasRenderingContext2D;
     const imageData = new ImageData(new Uint8ClampedArray(160 * 120 * 4), 120, 160);
     const image = new Uint32Array(imageData.data.buffer);
     const edgePoints: Point[] = [];
+
+    const newMask = new Uint8Array(120*160);
+    let pp = [];
+    const yellow = 0xff00ffff;
+    const cyan = 0xffffff00;
+    const red = 0xff0000ff;
+    const blue = 0xffff0000;
+    const green = 0xff00ff00;
     for (let y = 0; y < 160; y++) {
         let prev = 0;
         let opened = false;
+        let hasMotion = false;
         for (let x = 0; x < 120; x++) {
             const i = y * 120 + x;
             const v = data[i];
-            if (v & motionBit && v && thresholdBit && v & edgeBit && prev === motionBit) {
-                //image[i] = 0xffffffff;
-                if (!allNeighboursEqual(x, y, data, motionBit)) {
-                    opened = true;
-                    image[i] = 0xff00ffff;
-                    edgePoints.push({x, y});
-                }
+            if (v & motionBit) {
+                hasMotion = true;
             }
-            else if (v & motionBit && v & thresholdBit && prev === motionBit) {
-                //image[i] = 0xff00ffff; //0xffffffff; // Blue
+            if (x > 0 && prev === 0 && (v & thresholdBit)) {
+                //image[i] = red;
+            } else if (prev & thresholdBit && v === 0) {
+                //image[i] = blue;
+            } else if (v & edgeBit && v & thresholdBit && !allNeighboursEqual(x, y, data, edgeBit)) {
+                newMask[i] = 1;
+            } else if (v & edgeBit && v & motionBit && !allNeighboursEqual(x, y, data, motionBit)) {
+                newMask[i] = 2;
+            }
 
-                if (!allNeighboursEqual(x, y, data, motionBit)) {
-                    opened = true;
-                    image[i] = 0xff00ffff;
-                    edgePoints.push({x, y});
-                }
-            }
-            else if (v & motionBit && v && thresholdBit && v & edgeBit) {
-                //image[i] = 0xff0000ff; // Red
-            } else if (v & motionBit && v & thresholdBit) {
-                //image[i] = 0x330000ff; // Blue
-            } else if (v & motionBit && v & edgeBit) {
-                // Never happens
-                //image[i] = 0xff00ff00;
-            } else if (v & thresholdBit && v & edgeBit) {
-                //image[i] = 0xffffffff;
-            } else if (v & motionBit) { // No threshold bit set
-                image[i] = 0xffffff00; // Cyan
-
-                if (opened) {
-                    if (prev & motionBit && prev && thresholdBit && prev & edgeBit) {
-                        if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
-                            image[i - 1] = 0xff00ffff; // Red
-                            edgePoints.push({x: x - 1, y});
-                        }
-                    } else if (prev & motionBit && prev & thresholdBit) {
-                        if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
-                            image[i - 1] = 0xff00ffff; // Blue
-                            edgePoints.push({x: x - 1, y});
-                        }
-                    }
-                    //opened = false;
-                }
-            }
-            // } else if (v & thresholdBit) {
-            //     //image[i] = 0x9900ffff; // Yellow
-            // } else if (v & edgeBit) {
-            //     image[i] = 0x99ffffff; // Yellow
-            // } else {
-            //     image[i] = 0x00000000;
+            // if (v & motionBit && v && thresholdBit && v & edgeBit && prev === motionBit) {
+            //     if (!allNeighboursEqual(x, y, data, motionBit)) {
+            //         opened = true;
+            //         image[i] = yellow;
+            //         edgePoints.push({x, y});
+            //         pp.push([x, y]);
+            //     }
             // }
+            // else if (v & motionBit && v & thresholdBit && prev === motionBit) {
+            //     if (!allNeighboursEqual(x, y, data, motionBit)) {
+            //         opened = true;
+            //         image[i] = yellow;
+            //         edgePoints.push({x, y});
+            //         pp.push([x, y]);
+            //     }
+            // }
+            // else if (v & motionBit && v && thresholdBit && v & edgeBit) {
+            //     //image[i] = 0xff0000ff; // Red
+            // } else if (v & motionBit && v & thresholdBit) {
+            //     //image[i] = 0x990000ff; // Blue
+            // } else if (v & motionBit && v & edgeBit) {
+            //     // Never happens
+            //     //image[i] = 0xff00ff00;
+            // } else if (v & thresholdBit && v & edgeBit) {
+            //     //image[i] = 0xffffffff;
+            // } else if (v & motionBit) { // No threshold bit set
+            //     //image[i] = 0xffffff00; // Cyan
+            //     if (opened) {
+            //         if (prev & motionBit && prev && thresholdBit && prev & edgeBit) {
+            //             if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
+            //                 image[i - 1] = yellow; // Red
+            //                 edgePoints.push({x: x - 1, y});
+            //                 pp.push([x - 1, y]);
+            //             }
+            //         } else if (prev & motionBit && prev & thresholdBit) {
+            //             if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
+            //                 image[i - 1] = yellow; // Blue
+            //                 edgePoints.push({x: x - 1, y});
+            //                 pp.push([x - 1, y]);
+            //             }
+            //         }
+            //         //opened = false;
+            //     }
+            // } else if (v & thresholdBit) {
+            //     //image[i] = 0x3300ff00; // green
+            // } //else if (v & edgeBit) {
+            // //     image[i] = 0x99ffffff; // Yellow
+            // // } else {
+            // //     image[i] = 0x00000000;
+            // // }
             prev = v;
         }
     }
-
-    edgePoints.sort((a, b) => {
-        const cmp = a.y - b.y;
-        if (cmp === 0) {
-            return a.x - b.x;
-        }
-        return cmp;
-    });
-
-
-
-    const distanceThreshold = 5 * 5;
-    const start = performance.now();
-    if (edgePoints.length) {
-        const edgePSet: Set<Point> = new Set();
-        for (const p of edgePoints) {
-            edgePSet.add(p);
-        }
-        // Take first point, then scan through y and split into sets?
-        let sets = [[edgePoints[0]]];
-        for (const pt of edgePSet) {
-            let matchedPrevSet = false;
-            for (const set of sets) {
-                const lastP = set[set.length - 1];
-                if (distanceSq(lastP, pt) < distanceThreshold && !pointIsInSet(pt, set)) {
-                    set.push(pt);
-                    edgePSet.delete(pt);
-                    matchedPrevSet = true;
-                    break;
-                }
+    const nnMask = new Uint8Array(120*160);
+    for (let y = 0; y < 160; y++) {
+        for (let x = 0; x < 120; x++) {
+            const i = y * 120 + x;
+            if (newMask[i] === 1 && localDensity(x, y, newMask, 1) >= 3) {
+                nnMask[i] = 1;
             }
-            if (matchedPrevSet) {
-                continue;
+            // if (newMask[i] === 2) {
+            //     nnMask[i] = 2;
+            // }
+            else if (newMask[i] === 2 && localDensity(x, y, newMask, 2) >= 3) {
+                nnMask[i] = 2;
             }
-            if (pt.y < 159) {
-                for (const set of sets) {
-                    // TODO(jon): First look further ray-casting in the direction of the current set line/average.
-                    // get the current average direction vector.
-                    if (pointIsInSet(pt, set)) {
-                        continue;
-                    }
-                    if (set.length > 2) {
-                        // TODO(jon): Do we need to make this part of the set start from a zero origin for this to work
-                        //  properly?
+            if (nnMask[i] === 1) {
+                //image[i] = cyan;
+                pp.push({x, y});
+            } else if (nnMask[i] === 2) {
+                //image[i] = yellow;
+                pp.push({x, y});
+            }
+        }
+    }
+    if (pp.length > 10) {
 
-                        // TODO(jon): Detect the case where the segment is a straight line in x or y.
-                        const slice = set.slice(0, Math.min(5, set.length - 1));
-                        const firstX = slice[0].x;
-                        const firstY = slice[0].y;
-                        let sameX = true;
-                        let sameY = true;
-                        for (const p of slice.slice(1)) {
-                            if (p.x !== firstX) {
-                                sameX = false;
-                            }
-                            if (p.y !== firstY) {
-                                sameY = false;
-                            }
-                        }
-                        let dir;
-                        if (sameX) {
-                            dir = {x: 0, y: 1};
-                        } else if (sameY) {
-                            dir = {x: 1, y: 0};
-                        } else {
-                            const dd = directionOfSet(slice);
-                            //console.log(dd);
-                            dir = dd.v;
-                        }
-                        const startP = set[set.length - 1];
-                        //console.log('searching from ', startP, 'to join with ', pt, 'in ', dir);
-                        // Now ray-cast until we find something, or get too far away.
+        // TODO(jon): Also add the edges of the threshold to pp?
 
-                        // We should be trying to find an existing edge to join 'curr' to.
-
-                        // Maybe make a long line in the direction dir, and then look to see if at any stage
-                        // curr is < threshold distance from the line?
-                        const endP = add(startP, scale(dir, distanceThreshold));
-                        console.log("searching for match to", pt, 'from startP', startP);
-                        if (distToSegmentSquared(pt, startP, endP) < distanceThreshold) {
-                            ctx2.save();
-                            ctx2.beginPath();
-                            ctx2.strokeStyle = 'red';
-                            ctx.lineWidth = 0.5;
-                            ctx2.moveTo(startP.x, startP.y);
-                            ctx2.lineTo(endP.x, endP.y);
-                            ctx2.stroke();
-                            ctx2.beginPath();
-                            ctx2.fillStyle = 'blue';
-                            ctx2.arc(endP.x, endP.y, 1, 0, Math.PI * 2);
-                            ctx2.fill();
-                            ctx2.restore();
-                            // TODO(jon): Once we've found a join point, we can continue adding greedily from that
-                            //  point.
-                            console.log('joining', startP, pt);
-                            edgePSet.delete(pt);
-                            matchedPrevSet = true;
-                            set.push(pt);
-
-                            // TODO(jon): This doesn't seem to be breaking properly?
+        // TODO(jon): Work out the center of mass of pp, and then remove any points that are too far from it.
+        // let aX = 0;
+        // let aY = 0;
+        // for (const {x, y} of pp) {
+        //     aX += x;
+        //     aY += y;
+        // }
+        // const center = {x: aX / pp.length, y: aY / pp.length };
+        // const dP = pp.map(x => ({p: x, d: distanceSq(x, center)}));
+        // dP.sort((a, b) => a.p.x - b.p.x);
+        // const ppp: Set<Point> = new Set();
+        // let first = dP[0];
+        // // FIXME(jon): Sort by x, then y, then distance?  Look for gaps in x, look for gaps in y
+        // for (let i = 1; i < dP.length; i++) {
+        //     const dDiff = Math.abs(dP[i].p.x - first.p.x);
+        //     if (dDiff <= 5) {
+        //         ppp.add(dP[i].p);
+        //     } else {
+        //         break;
+        //     }
+        //     first = dP[i];
+        // }
+        //
+        // dP.sort((a, b) => a.p.y - b.p.y);
+        // first = dP[0];
+        // for (let i = 1; i < dP.length; i++) {
+        //     const dDiff = Math.abs(dP[i].p.y - first.p.y);
+        //     if (dDiff <= 5) {
+        //         ppp.add(dP[i].p);
+        //     } else {
+        //         break;
+        //     }
+        //     first = dP[i];
+        // }
+        // TODO(jon): Also remove small clusters? - Or check the distance from each cluster to the center of mass
+        //  of other clusters.
+        const clusters = DBScan({
+            dataset: pp,
+            epsilon: 5 * 5,
+            distanceFunction: distanceSq,
+            minimumPoints: 3
+        });
+        const largestCluster = (arr: number[][]): number[] => (arr.reduce((acc: number[], val: number[]) => {
+            if (val.length > acc.length) {
+                return val;
+            }
+            return acc;
+        }, []));
+        // const ppp = [];
+        const colors = [
+            cyan,
+            red,
+            yellow,
+            blue,
+            green,
+        ];
+        const ppp = [];
+        if (clusters.clusters.length) {
+            let i = 0;
+            for (const cluster of clusters.clusters) {
+                if (cluster.length < 15) {
+                    let anyPointIsOnThresholdPlusMotion = false;
+                    for (const pointIndex of cluster) {
+                        const point: Point = pp[pointIndex];
+                        const index = 120 * point.y + point.x;
+                        const v = data[index];
+                        if (v & motionBit && v & thresholdBit) {
+                            anyPointIsOnThresholdPlusMotion = true;
                             break;
                         }
+                    }
+                    for (const pointIndex of cluster) {
+                        const point: Point = pp[pointIndex];
+                        const index = 120 * point.y + point.x;
+                        if (anyPointIsOnThresholdPlusMotion) {
+                            image[index] = colors[i % colors.length];
+                            ppp.push(point);
+                        }
+                    }
+                } else {
+                    for (const pointIndex of cluster) {
+                        const point: Point = pp[pointIndex];
+                        const index = 120 * point.y + point.x;
+                        ppp.push(point);
+                        image[index] = colors[i % colors.length];
+                    }
+                }
+                i++;
+            }
+        }
+        //pp = pp.filter((v, index) => !clusters.noise.includes(index));
+        // ctx2.beginPath();
+        // ctx2.fillStyle = 'red';
+        // ctx2.arc(center.x, center.y, 2, 0, Math.PI * 2);
+        // ctx2.fill();
+
+        //const concaveHull = concaveman(pp, 2);
+        if (ppp.length > 15) {
+            let hull = fastConvexHull(ppp.map(({x, y}) => [x, y]));
+
+
+            // Take the leftmost and right most points, and extend to the bottom:
+            let minX = Number.MAX_SAFE_INTEGER;
+            let maxX = 0;
+            let leftIndex = 0;
+            let rightIndex = 0;
+            for (let i = 0; i < hull.length; i++) {
+                const p = hull[i];
+                if (p[0] < minX) {
+                    minX = p[0];
+                    leftIndex = i;
+                }
+                if (p[0] > maxX) {
+                    maxX = p[0];
+                    rightIndex = i;
+                }
+            }
+            hull.splice(1, rightIndex - 1);
+            hull.splice(1, 0, [hull[0][0], 159], [hull[1][0], 159]);
+
+            let first = hull.findIndex(([x, y]) => y === 159);
+            hull = [...hull.slice(first + 1), ...hull.slice(0, first + 1)].reverse();
+
+            ctx2.beginPath();
+            ctx2.strokeStyle = 'rgba(255, 255, 255, 1)';
+            ctx2.moveTo(hull[0][0], hull[0][1]);
+            for (const [x, y] of hull.slice(1)) {
+                ctx2.lineTo(x, y);
+            }
+            ctx2.lineTo(hull[0][0], hull[0][1]);
+            ctx2.stroke();
+
+            if (false && hull.length > 4) {
+
+
+                const angleBetween = (a: [number, number], b: [number, number], c: [number, number]): number => {
+                    let aa = {x: a[0], y: a[1] };
+                    let bb = {x: b[0], y: b[1] };
+                    let cc = {x: c[0], y: c[1] };
+                    let v1 = sub(bb, aa);
+                    let v2 = sub(cc, aa);
+                    const slopeDiff = (v1.y / v1.x) - (v2.y / v2.x);
+                    //debugger;
+                    //console.log(slopeDiff);
+                    return Math.abs(slopeDiff);
+                    //return Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0]);
+                };
+                const radToDeg = (rad: number): number => (rad * (180 / Math.PI));
+                let kk = 0;
+                let leftInnerX = hull[kk][0];
+                while (Math.abs(hull[kk][0] - leftInnerX) < 3) {
+                    kk++;
+                }
+                kk--;
+                let l = hull[kk];
+                ctx2.beginPath();
+                ctx2.fillStyle = 'orange';
+                ctx2.arc(l[0], l[1], 2, 0, Math.PI * 2);
+                ctx2.fill();
+                kk++;
+                const maxAngle = 0.03;
+                const print = frameNumber === 27 || frameNumber === 28;
+                if (print) {
+                    console.log(kk, angleBetween(l, hull[kk + 1], hull[kk + 2]));
+                }
+                while (angleBetween(l, hull[kk + 1], hull[kk + 2]) < maxAngle && kk < hull.length - 1) {
+                    kk++;
+                }
+                const leftInner = hull[kk];
+                ctx2.beginPath();
+                ctx2.fillStyle = 'red';
+                ctx2.arc(leftInner[0], leftInner[1], 2, 0, Math.PI * 2);
+                ctx2.fill();
+
+                kk = hull.length - 1;
+                let rightInnerX = hull[kk][0];
+                while (Math.abs(hull[kk][0] - rightInnerX) < 3) {
+                    kk--;
+                }
+                kk++;
+                l = hull[kk];
+                ctx2.beginPath();
+                ctx2.fillStyle = 'orange';
+                ctx2.arc(l[0], l[1], 2, 0, Math.PI * 2);
+                ctx2.fill();
+                if (print) {
+                    console.log(kk, angleBetween(l, hull[kk - 1], hull[kk - 2]));
+                }
+                while (angleBetween(l, hull[kk - 1], hull[kk - 2]) < maxAngle && kk > 0) {
+                    kk--;
+                }
+                const rightInner = hull[kk];
+                ctx2.beginPath();
+                ctx2.fillStyle = 'green';
+                ctx2.arc(rightInner[0], rightInner[1], 2, 0, Math.PI * 2);
+                ctx2.fill();
+                // TODO(jon): Also make sure the angle between line segments is past a certain threshold, so the points are not sitting on a more-or-less straight line.
+
+                ctx2.beginPath();
+                ctx2.strokeStyle = 'blue';
+                ctx2.moveTo(leftInner[0], leftInner[1]);
+                ctx2.lineTo(rightInner[0], rightInner[1]);
+                ctx2.stroke();
+                //
+                //
+                // let k = 1;
+                //
+                // const leftInner = hull[k];
+                // k = hull.length - 1;
+                // l = hull[k];
+                // while (Math.abs(radToDeg(angleBetween(l, hull[k]))) < 0.1 && k > 1) {
+                //     k--;
+                // }
+                // const rightInner = hull[k];
+
+
+
+
+                //
+                // ctx2.beginPath();
+                // ctx2.fillStyle = 'green';
+                // ctx2.arc(rightInner[0], rightInner[1], 2, 0, Math.PI * 2);
+                // ctx2.fill();
+            }
+
+
+            /*
+            const pts = new Uint8Array(concaveHull.length * 2);
+            let ptr = 0;
+            for (let i = 0; i < concaveHull.length; i++) {
+                pts[ptr++] = concaveHull[i][0];
+                pts[ptr++] = concaveHull[i][1];
+            }
+            drawCurveFromPoints(pts, ctx2);
+            */
+        }
+    }
+
+    if (false) {
+        edgePoints.sort((a, b) => {
+            const cmp = a.y - b.y;
+            if (cmp === 0) {
+                return a.x - b.x;
+            }
+            return cmp;
+        });
+        const distanceThreshold = 5 * 5;
+        const start = performance.now();
+        let ss = 0;
+        if (edgePoints.length) {
+            const dedupPSet: Set<string> = new Set();
+            for (const p of edgePoints) {
+                dedupPSet.add(JSON.stringify(p));
+            }
+            const edgePSet: Set<Point> = new Set();
+            for (const p of dedupPSet) {
+                edgePSet.add(JSON.parse(p) as Point);
+            }
+            console.log(edgePSet.size, edgePoints.length);
+            // Take first point, then scan through y and split into sets?
+            let sets = [[edgePoints[0]]];
+            let lastPt = {x: 0, y: 0};
+            for (const pt of edgePSet) {
+                console.assert(!pointsAreEqual(lastPt, pt));
+                lastPt = pt;
+                let matchedPrevSet = false;
+                for (const set of sets) {
+                    const lastP = set[set.length - 1];
+                    if (distanceSq(lastP, pt) < distanceThreshold && !pointIsInSet(pt, set)) {
+                        set.push(pt);
+                        console.assert(edgePSet.has(pt));
+                        console.assert(edgePSet.delete(pt));
+                        matchedPrevSet = true;
+                        break;
                     }
                 }
                 if (!matchedPrevSet) {
@@ -1681,93 +2010,314 @@ function drawImage(canvas: HTMLCanvasElement, canvas2: HTMLCanvasElement, data: 
                     edgePSet.delete(pt);
                     sets.push([pt]);
                 }
-            }
-        }
+                //if (pt.y < 159) {
+                //for (const set of sets) {
 
-        // TODO(jon): At the end go through each length from the start, and try and merge sets to the ends of other lengths.
-        // At least, if two line set end-points are within 10px of each other, join them up?
-
-        let all = sets.filter(s => s.length > 3);
-        let allS: Set<Point[]> = new Set();
-        for (const set of all) {
-            allS.add(set);
-        }
-        {
-            // Merging sets
-            // for (const a of allS) {
-            //     const startA = a[0];
-            //     const endA = a[a.length - 1];
-            //     for (const b of allS) {
-            //         if (a !== b) {
-            //             const startB = b[0];
-            //             const endB = b[b.length - 1];
-            //             if (
-            //                 distanceSq(startA, startB) < 100 ||
-            //                 distanceSq(startA, endB) < 100 ||
-            //                 distanceSq(endA, startB) < 100 ||
-            //                 distanceSq(endA, endB) < 100
-            //             ) {
-            //                 // merge.
-            //                 allS.delete(b);
-            //                 a.push(...b);
-            //             }
-            //         }
-            //     }
-            // }
-        }
-
-        // console.log(sets.reduce((acc, s) => acc + s.length, 0), edgePoints.length);
-        // console.log(sets);
-        const colors = [
-            0xffff00ff,
-            0xff0000ff,
-            0xffff0000,
-            0xff0000ff,
-            0xff00ff00,
-            0xff000000,
-            0xffff00ff,
-            0xffff00ff,
-        ];
-        let c = 0;
-        for (const set of allS) {
-
-                const color = colors[c % colors.length];
-                for (const {x, y} of set) {
-                    image[y * 120 + x] = color;
+                /*
+                // TODO(jon): First look further ray-casting in the direction of the current set line/average.
+                // get the current average direction vector.
+                if (pointIsInSet(pt, set)) {
+                    continue;
                 }
+                if (set.length > 2) {
+                    // TODO(jon): Do we need to make this part of the set start from a zero origin for this to work
+                    //  properly?
+
+                    // TODO(jon): Detect the case where the segment is a straight line in x or y.
+                    const slice = set.slice(0, Math.min(5, set.length - 1));
+                    const firstX = slice[0].x;
+                    const firstY = slice[0].y;
+                    let sameX = true;
+                    let sameY = true;
+                    for (const p of slice.slice(1)) {
+                        if (p.x !== firstX) {
+                            sameX = false;
+                        }
+                        if (p.y !== firstY) {
+                            sameY = false;
+                        }
+                    }
+                    let dir;
+                    if (sameX) {
+                        dir = {x: 0, y: 1};
+                    } else if (sameY) {
+                        dir = {x: 1, y: 0};
+                    } else {
+                        const dd = directionOfSet(slice);
+                        //console.log(dd);
+                        dir = dd.v;
+                    }
+                    const startP = set[set.length - 1];
+                    //console.log('searching from ', startP, 'to join with ', pt, 'in ', dir);
+                    // Now ray-cast until we find something, or get too far away.
+
+                    // We should be trying to find an existing edge to join 'curr' to.
+
+                    // Maybe make a long line in the direction dir, and then look to see if at any stage
+                    // curr is < threshold distance from the line?
+                    const endP = add(startP, scale(dir, distanceThreshold));
+                    console.log("searching for match to", pt, 'from startP', startP);
+                    if (distToSegmentSquared(pt, startP, endP) < distanceThreshold) {
+                        ctx2.save();
+                        ctx2.beginPath();
+                        ctx2.strokeStyle = 'red';
+                        ctx.lineWidth = 0.5;
+                        ctx2.moveTo(startP.x, startP.y);
+                        ctx2.lineTo(endP.x, endP.y);
+                        ctx2.stroke();
+                        ctx2.beginPath();
+                        ctx2.fillStyle = 'blue';
+                        ctx2.arc(endP.x, endP.y, 1, 0, Math.PI * 2);
+                        ctx2.fill();
+                        ctx2.restore();
+                        // TODO(jon): Once we've found a join point, we can continue adding greedily from that
+                        //  point.
+                        console.log('joining', startP, pt);
+                        console.assert(edgePSet.delete(pt));
+                        console.assert(!edgePSet.has(pt));
+                        matchedPrevSet = true;
+                        set.push(pt);
+                        // TODO(jon): This doesn't seem to be breaking properly?
+                        break;
+                    }
+                }
+                */
+
+                //}
+
+                //}
+            }
+
+            // TODO(jon): At the end go through each length from the start, and try and merge sets to the ends of other lengths.
+            // At least, if two line set end-points are within 10px of each other, join them up?
+
+            let all = sets.filter(s => s.length > 3);
+            let allS: Set<Point[]> = new Set();
+            for (const set of all) {
+                allS.add(set);
+            }
+            {
+                console.log("unmerged sets", allS.size, allS);
+                // Merging sets
+                for (const a of allS) {
+                    //console.log('finding matches for set', a);
+                    for (const b of allS) {
+                        if (a !== b) {
+                            const startPB = b[0];
+                            const endPB = b[b.length - 1];
+                            if (
+                                distanceSq(a[0], startPB) < 25 ||
+                                distanceSq(a[0], endPB) < 25 ||
+                                distanceSq(a[a.length - 1], startPB) < 25 ||
+                                distanceSq(a[a.length - 1], endPB) < 25
+                            ) {
+                                console.log('mergin close endpoints');
+                                // merge.
+                                allS.delete(b);
+                                a.unshift(...b.reverse());
+                                break; // ?
+                            }
+
+                            const startSliceA = head(a).reverse();
+                            const endSliceA = tail(a);
+                            if (lineSetsJoin(startSliceA, startPB, ctx2)) {
+                                // merge.
+                                allS.delete(b);
+                                a.unshift(...b.reverse());
+                                break; // ?
+                            } else if (lineSetsJoin(startSliceA, endPB, ctx2)) {
+                                allS.delete(b);
+                                a.unshift(...b);
+                                break; // ?
+                            } else if (lineSetsJoin(endSliceA, startPB, ctx2)) {
+                                allS.delete(b);
+                                a.push(...b);
+                                break; // ?
+                            } else if (lineSetsJoin(endSliceA, endPB, ctx2)) {
+                                allS.delete(b);
+                                a.push(...b.reverse()); // ??
+                                break; // ?
+                            }
+                        }
+                    }
+                }
+                console.log("merged sets", allS.size);
+            }
+
+            for (const setA of allS) {
+                let b = boundsForConvexHull(setA);
+                for (const setB of allS) {
+                    if (setA !== setB) {
+                        const bB = boundsForConvexHull(setB);
+                        if (Math.abs(bB.y1 - b.y0) > 10 || Math.abs(bB.y0 - b.y1) > 10) {
+                            continue;
+                        }
+                        if (Math.abs(bB.x0 - b.x1) <= 10 || Math.abs(bB.x1 - b.x0) <= 10) {
+                            setA.push(...setB);
+                            allS.delete(setB);
+                            // TODO(jon): Union bounds, will be more efficient.
+                            b = boundsForConvexHull(setA);
+                        }
+                    }
+                }
+            }
+
+            // NOTE(jon): If there are two sets of reasonable length still, and each one has it's lowestY as the first element,
+            //  look at joining them as two sides of the same shape.
+            for (const set of allS) {
+
+            }
+
+            // If the boundingboxes are within 10 pixels in x of each other, join?
+            //const bounds = Array.from(allS).map(h => ({s: h, b: boundsForConvexHull(h)}));
+
+            const setsOfReasonableLength = Array.from(allS).filter(x => x.length > 30);
+            if (setsOfReasonableLength.length === 2) {
+                // const setOne = setsOfReasonableLength[0].sort((a, b) => a.y - b.y);
+                // const setTwo = setsOfReasonableLength[1].sort((a, b) => a.y - b.y);
+                setsOfReasonableLength[0].push(...setsOfReasonableLength[1]);
+                allS.delete(setsOfReasonableLength[1]);
+            }
+            console.log(allS);
+            // console.log(sets.reduce((acc, s) => acc + s.length, 0), edgePoints.length);
+            // console.log(sets);
+            const colors = [
+                0xffff00ff,
+                0xff0000ff,
+                0xffff0000,
+                // 0xff0000ff,
+                // 0xff00ff00,
+                // 0xff000000,
+                // 0xffff00ff,
+                // 0xffff00ff,
+            ];
+            let c = 0;
+
+            for (const set of allS) {
+                //if (set.length > 30) {
+                const points = [];
+                const color = colors[c % colors.length];
+
+                // TODO(jon): Arrange lines to left and right of mid-point.
+                // Middle of the line set is the top-most y:
+
+                if (set.length > 50) {
+                    // Extend the set to the bottom of the frame.
+                    let start = set[0];
+                    let end = set[set.length - 1];
+                    console.log(JSON.stringify({start, end}, null, '\t'));
+                    while (start.y < 159) {
+                        start = {x: start.x, y: start.y + 1};
+                        set.unshift(start);
+                    }
+                    while (end.y < 159) {
+                        end = {x: end.x, y: end.y + 1};
+                        set.push(end);
+                    }
+
+                    const bottom = boundsForConvexHull(set.filter(x => x.y == 159));
+                    for (let i = bottom.x0; i < bottom.x1; i++) {
+                        set.push({x: i, y: 159});
+                    }
+
+                    for (const {x, y} of set) {
+                        points.push([x, y]);
+                        image[y * 120 + x] = color;
+                    }
+                    const concaveHull = concaveman(points, 2);
+                    ctx2.beginPath();
+                    ctx2.strokeStyle = 'rgba(0, 255, 0, 1)';
+                    ctx2.moveTo(concaveHull[0][0], concaveHull[0][1]);
+                    for (const [x, y] of concaveHull.slice(1)) {
+                        ctx2.lineTo(x, y);
+                    }
+                    ctx2.stroke();
+                }
+                //}
                 c++;
+            }
 
-            // Now try to join the sets, based on extending vectors from the ends of lines, and trying to make them
-            // meet up to close gaps.
+            // TODO(jon): Draw this
+        }
+        const end = performance.now();
+        console.log('matching', end - start);
+    }
+    //console.log('concave', end - ss);
+    ctx.putImageData(imageData, 0, 0);
+}
 
-            // We really want to get rid of dis-joint sets in x
+const maxSliceLength = 5;
+const minYIndex = (arr: Point[]): number => {
+    let lowestY = Number.MAX_SAFE_INTEGER;
+    let lowestIndex = 0;
+    for (let i = 0; i < arr.length; i++) {
+        const y = arr[i].y;
+        if (y < lowestY) {
+            lowestY = y;
+            lowestIndex = i;
         }
     }
-    const end = performance.now();
-    console.log('matching', end - start);
+    return lowestIndex;
+};
+const head = (arr: Point[]): Point[] => arr.slice(0, Math.min(maxSliceLength, arr.length - 1));
+const tail = (arr: Point[]): Point[] => arr.slice((arr.length - 1) - Math.min(maxSliceLength, arr.length) + 1, Math.min(maxSliceLength, arr.length) + 1);
 
-    // Weight edge points based on their distance from other points.  Remove points with too far distance?
-    // Work out connectedness of points.
-    // for (let i = 0; i < edgePoints.length; i++) {
-    //     const tP = edgePoints[i];
-    //     for (let j = 0; j < edgePoints.length; j++) {
-    //         if (i !== j) {
-    //             const tPP = edgePoints[j];
-    //             // There's a max distance from other points to be part of a set?
-    //             const d = distance({x: tP.x, y: tP.y}, {x: tPP.x, y: tPP.y});
-    //             tP.d += d;
-    //         }
-    //     }
-    // }
+function lineSetsJoin(setSection: Point[], point: Point, ctx: CanvasRenderingContext2D): boolean {
+    const distanceThreshold = 5 * 5;
+    if (!setSection.length) {
+        return false;
+    }
+    const firstX = setSection[0].x;
+    const firstY = setSection[0].y;
+    let sameX = true;
+    let sameY = true;
+    for (const p of setSection.slice(1)) {
+        if (p.x !== firstX) {
+            sameX = false;
+        }
+        if (p.y !== firstY) {
+            sameY = false;
+        }
+    }
+    let dir;
 
-    // Maybe make a connectivity graph, and prune branches of the graph that aren't long enough?
-    //edgePoints.sort((a, b) => (b.d - a.d));
+    // Detect whether it's just a straight line in x or y
+    if (sameX) {
+        dir = {x: 0, y: 1};
+    } else if (sameY) {
+        dir = {x: 1, y: 0};
+    } else {
+        const dd = directionOfSet(setSection);
+        //console.log(dd);
+        dir = dd.v;
+    }
 
-    // Histogram the points, and work out where to slice?
-    //console.log(edgePoints);
+    const startP = setSection[setSection.length - 1];
+    //console.log('searching from ', startP, 'to join with ', pt, 'in ', dir);
+    // Now ray-cast until we find something, or get too far away.
 
+    // We should be trying to find an existing edge to join 'curr' to.
 
-    ctx.putImageData(imageData, 0, 0);
+    // Maybe make a long line in the direction dir, and then look to see if at any stage
+    // curr is < threshold distance from the line?
+    const endP = add(startP, scale(dir, distanceThreshold));
+    ctx.save();
+    ctx.beginPath();
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 0.5;
+    ctx.moveTo(startP.x, startP.y);
+    ctx.lineTo(endP.x, endP.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.fillStyle = 'blue';
+    ctx.arc(endP.x, endP.y, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    if (distToSegmentSquared(point, startP, endP) < distanceThreshold * 2) {
+        return true;
+    }
+    // Now we have the direction of the line, and can cast out towards b, and see if they intersect.
+    return false;
 }
 
 function drawImage2(canvas: HTMLCanvasElement, data: Float32Array, min: number, max: number) {
@@ -1782,8 +2332,13 @@ function drawImage2(canvas: HTMLCanvasElement, data: Float32Array, min: number, 
     ctx.putImageData(img, 0, 0);
 }
 
-function drawCurveFromPoints(pointsArray: Uint8Array, canvas: HTMLCanvasElement) {
-    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+function drawCurveFromPoints(pointsArray: Uint8Array, canvas: HTMLCanvasElement | CanvasRenderingContext2D) {
+    let ctx;
+    if (canvas instanceof CanvasRenderingContext2D) {
+        ctx = canvas;
+    } else {
+        ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    }
     const bezierPts = curveFit.fitCurveThroughPoints(pointsArray, 0.75);
     // TODO(jon): Run a smoothing pass on this to smooth out longer lines?
     // Maybe have adaptive error for different parts of the curve?
@@ -1791,11 +2346,11 @@ function drawCurveFromPoints(pointsArray: Uint8Array, canvas: HTMLCanvasElement)
     if (bezierPts.length) {
         {
             ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+            ctx.strokeStyle = "rgba(255, 255, 255, 1)";
             ctx.lineWidth = 2;
             ctx.lineCap = "round";
 
-            ctx.setLineDash([3, 6]);
+            //ctx.setLineDash([3, 6]);
 
             //ctx.fillStyle = "rgba(255, 255, 255, 1)";
             // ctx.strokeStyle = "rgba(255, 0, 255, 1)";
@@ -1916,7 +2471,11 @@ function advanceScreeningState(nextState: ScreeningState, prevState: ScreeningSt
     // ];
     const files: string[] = [
         //"/cptv-files/bunch of people downstairs 20200812.160746.324.cptv",
-        "/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
+        //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
+        "/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv",
+        //"/cptv-files/20200716.153101.633.cptv",
+        //"/cptv-files/20200718.130508.586.cptv" - still bad
+        //"/cptv-files/20200718.130536.950.cptv"
     ];
     if (files.length) {
         const dropZone = document.getElementById("drop");
@@ -1970,6 +2529,20 @@ function advanceScreeningState(nextState: ScreeningState, prevState: ScreeningSt
 }())
  */
 
+function shapesOverlap(a: RawShape, b: RawShape): boolean {
+    for (const [y, rowA] of Object.entries(a)) {
+        if (b[Number(y)]) {
+            for (const spanB of b[Number(y)]) {
+                for (const spanA of rowA) {
+                    if (!(spanA.x1 < spanB.x0 || spanA.x0 >= spanB.x1)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
 
 async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
     const dropZone = document.getElementById("drop");
@@ -1977,6 +2550,46 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         (dropZone.parentElement as HTMLElement).removeChild(dropZone);
     }
     cptvPlayer.initWithCptvData(new Uint8Array(buffer));
+
+    const toggleOpacity = (item: Element) => {
+        if (item.classList.contains('off')) {
+            item.classList.remove('off');
+            item.classList.add('on');
+        } else {
+            item.classList.add('off');
+            item.classList.remove('on');
+        }
+    };
+
+    const toggleActive = (item: Element) => {
+        if (item.classList.contains('active')) {
+            item.classList.remove('active');
+        } else {
+            item.classList.add('active');
+        }
+    }
+
+    (document.getElementById("toggle-bg") as HTMLButtonElement).addEventListener('click', (e) => {
+        toggleActive(e.target as Element);
+        document.querySelectorAll('.bg2').forEach(toggleOpacity);
+    });
+    (document.getElementById("toggle-motion") as HTMLButtonElement).addEventListener('click', (e) => {
+        toggleActive(e.target as Element);
+        document.querySelectorAll('.bg').forEach(toggleOpacity);
+    });
+    (document.getElementById("toggle-threshold") as HTMLButtonElement).addEventListener('click', (e) => {
+        toggleActive(e.target as Element);
+        document.querySelectorAll('.threshold').forEach(toggleOpacity);
+    });
+    (document.getElementById("toggle-edges") as HTMLButtonElement).addEventListener('click', (e) => {
+        toggleActive(e.target as Element);
+        document.querySelectorAll('.edge').forEach(toggleOpacity);
+    });
+    (document.getElementById("toggle-analysis") as HTMLButtonElement).addEventListener('click', (e) => {
+        toggleActive(e.target as Element);
+        document.querySelectorAll('.analysis').forEach(toggleOpacity);
+    });
+
     let frameNumber = -1;
     const seenFrames = new Set();
     let thermalReference = null;
@@ -1986,8 +2599,18 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
     let prevFace = null;
     let startTime = 0;
     let seenBody = false;
+    const refImages: Record<number, Float32Array> = {};
 
     let prevFrame = null;
+    let prevMotion: MotionStats = {
+        edge: 0,
+        hotInner: 0,
+        hotInnerEdge: 0,
+        motion: 0,
+        motionPlusThreshold: 0,
+        actionInBottomHalf: 0,
+        thresholded: 0
+    };
     while (!seenFrames.has(frameNumber)) {
         seenFrames.add(frameNumber);
         const frameInfo = cptvPlayer.getRawFrame(new Uint8Array(frameBuffer));
@@ -1996,9 +2619,27 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         // if (frameNumber !== 172 && frameNumber !== 173) {
         //     continue;
         // }
-        if (frameNumber < 278 || frameNumber > 279) {
+
+        // if (frameNumber < 2102 || frameNumber > 2106) {
+        //     continue;
+        // }
+        // if (frameNumber < 1017 || frameNumber > 1020) {
+        //     continue;
+        // }
+
+        // if (frameNumber < 247 || frameNumber > 251) {
+        //     continue;
+        // }
+
+        if (frameNumber < 0 || frameNumber > 73) {
             continue;
         }
+        // if (frameNumber < 66 || frameNumber > 67) {
+        //     continue;
+        // }
+
+
+
         // if (frameNumber !== 313 && frameNumber !== 314) {
         //     continue;
         // }
@@ -2011,6 +2652,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         smooth.smooth(frame, 16);
         const thresholded = smooth.getThresholded();
         const radialSmoothed = new Float32Array(smooth.getRadialSmoothed());
+        refImages[frameNumber] = radialSmoothed;
         const medianSmoothed = smooth.getMedianSmoothed();
         const {min, max, threshold} = smooth.getHeatStats();
         const histogram = smooth.getHistogram();
@@ -2040,8 +2682,6 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         // NOTE(jon): When we join and fill shapes, we want to keep a version that is just the thresholded version,
         //  for determining where to sample from.
 
-        const rawShapes = getRawShapes(thresholded, 120, 160);
-        const {shapes, didMerge: maybeHasGlasses} = preprocessShapes(rawShapes, frameNumber, thermalReference);
         //const convexShapes = shapes.map(convexHullForShape);
         //if (shapes.length) {
         // console.log('# ', frameNumber);
@@ -2056,16 +2696,16 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         analysisCanvas.width = WIDTH;
         analysisCanvas.height = HEIGHT;
         const ctx = analysisCanvas.getContext('2d') as CanvasRenderingContext2D;
+        const currentFrameNumber = frameNumber;
         analysisCanvas.addEventListener('mousemove', (e) => {
             const rect = (e.target as HTMLElement).getBoundingClientRect();
-            const x = Math.min(e.clientX - rect.x, 119);
-            const y = Math.min(e.clientY - rect.y, 159);
-
+            const x = Math.floor(Math.min(e.clientX - rect.x, 119));
+            const y = Math.floor(Math.min(e.clientY - rect.y, 159));
             const index = y * 120 + x;
-            const val = radialSmoothed[index];
+            const val = refImages[currentFrameNumber][index];
             // TODO(jon): Double, and triple check this temperature calculation!
             const temp = thermalRefC + (val - thermalRefRaw) * 0.01;
-            text.innerHTML = `(${x}, ${y}), ${temp.toFixed(2)}C&deg;<br>${~~val}::${~~thermalRefRaw}`;
+            text.innerHTML = `(${x}, ${y}), ${temp.toFixed(2)}C&deg;<br>${~~val}::${~~thermalRefRaw} - #${currentFrameNumber}`;
         });
         analysisCanvas.addEventListener('mouseleave', (e) => {
             text.innerHTML = "";
@@ -2086,6 +2726,16 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         sobelCanvas.width = WIDTH;
         sobelCanvas.height = HEIGHT;
 
+        const thresholdCanvas = document.createElement("canvas");
+        thresholdCanvas.className = 'threshold';
+        thresholdCanvas.width = WIDTH;
+        thresholdCanvas.height = HEIGHT;
+
+        const hist = document.createElement("canvas");
+        hist.className = "histogram";
+        hist.width = WIDTH;
+        hist.height = 30;
+
         // IDEA(jon): We can avoid smoothing altogether, and just smooth when we actually take a sample, when it's really cheap.
 
         // TODO(jon): Just calculate the edges
@@ -2102,7 +2752,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
 
 
         //console.log(sMin, sMax);
-        let {m, mx, im} =  subtractFrame(radialSmoothed, prevFrame, motionBit);
+        let {m, mx, motionMask} =  subtractFrame(radialSmoothed, prevFrame, motionBit);
         prevFrame = new Float32Array(radialSmoothed);
         if (m === -1) {
             m = min;
@@ -2120,28 +2770,275 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         //drawImage(motionCanvas, im, 0xff00ff00);
 
         //let th = new Uint8Array(120 * 160);
-        for (let i = 0; i < frame.length; i++) {
-            if (radialSmoothed[i] > threshold) {
-               im[i] |= thresholdBit;
-            }
-        }
-        for (let i = 0; i < sobel.length; i++) {
-            if (sobel[i] !== 0) {
-                im[i] |= edgeBit;
+        // Adjust threshold down if higher than the max of 34degrees
+        let adjustedThreshold = threshold;
+        if (thermalReference) {
+            const thresholdTemp = (thermalRefC + ((threshold - thermalRefRaw) * 0.01));
+            if (thresholdTemp > 33) {
+                // Make the threshold be 34
+                //thermalRefC - (34 +
+                //adjustedThreshold = ((thermalRefRaw / 38) * 34) / 0.01;
+                //return GThermalRefTemp + (val - UncorrectedThermalRef) * 0.01;
+
+                // 34 = (38 + ((t - b) * 0.01))
+                adjustedThreshold = thermalRefRaw - 500;
+
+                // FIXME(jon) Make sure there is enough pixels above the threshold, using the histogram:
+
+                //console.log(adjustedThreshold, thermalRefRaw);
             }
         }
 
-        const thresholdCanvas = document.createElement("canvas");
-        thresholdCanvas.className = 'threshold';
-        thresholdCanvas.width = WIDTH;
-        thresholdCanvas.height = HEIGHT;
-        drawImage(thresholdCanvas, analysisCanvas, im);
+        // Remove motion mask bits for motion lines that don't abut thresholds bits
+        // for (let y = 0; y < 120; y++) {
+        //     for (let x = 0; x < 160; x++) {
+        //         const i = y * 120 + x;
+        //         const v = motionMask[i];
+        //
+        //     }
+        // }
 
-        const hist = document.createElement("canvas");
-        hist.className = "histogram";
-        hist.width = WIDTH;
-        hist.height = 30;
-        drawHistogram(hist, histogram, min, max, threshold);
+        // for (let i = 0; i < frame.length; i++) {
+        //     if (radialSmoothed[i] > adjustedThreshold) {
+        //        motionMask[i] |= thresholdBit;
+        //     }
+        // }
+
+        // Only apply the threshold bit where the thresholded row contains some motion, if the thresholded row spans the full frame width.
+        for (let y = 0; y < 160; y++) {
+            let thresholdSpansWholeRow = true;
+            let hasMotion = false;
+            for (let x = 0; x < 120; x++) {
+                const i = y * 120 + x;
+                if (!hasMotion && motionMask[i] & motionBit) {
+                    hasMotion = true;
+                    if (!thresholdSpansWholeRow) {
+                        break;
+                    }
+                }
+                if (medianSmoothed[i] <= adjustedThreshold) {
+                    thresholdSpansWholeRow = false;
+                    if (hasMotion) {
+                        break;
+                    }
+                }
+            }
+            if ((thresholdSpansWholeRow && hasMotion) || !thresholdSpansWholeRow) {
+                for (let x = 0; x < 120; x++) {
+                    const i = y * 120 + x;
+                    if (medianSmoothed[i] > adjustedThreshold) {
+                        motionMask[i] |= thresholdBit;
+                    }
+                }
+            }
+        }
+
+        const thermalRefWidth = 120 - 95;
+        // Remove known thermal ref from mask (make this a factory calibration step)
+        for (let y = 99; y < 160; y++) {
+            for (let x = 91; x < 120; x++) {
+                const i = y * 120 + x;
+                motionMask[i] = 0;
+            }
+        }
+
+        let motionShapes = getRawShapes(motionMask, 120, 160, motionBit);
+        let thresholdShapes = getRawShapes(motionMask, 120, 160, thresholdBit);
+
+        let filteredMotion = new Set();
+        let filteredThreshold = new Set();
+        for (const motionShape of motionShapes) {
+            for (const thresholdShape of thresholdShapes) {
+                if (shapesOverlap(motionShape, thresholdShape)) {
+
+                    // Make sure the areas are not long thin horizontal boxes taking up the full frame width,
+                    const motionShapeArea = rawShapeArea(motionShape);
+                    const motionShapeBounds = boundsForRawShape(motionShape);
+                    const motionBoundsFilled = (motionShapeBounds.x1 - motionShapeBounds.x0) * (motionShapeBounds.y1 + 1 - motionShapeBounds.y0);
+                    if (motionShapeArea / motionBoundsFilled > 0.98 && motionShapeBounds.x0 === 0 && motionShapeBounds.x1 === 120) {
+                        continue;
+                    }
+                    const thresholdShapeArea = rawShapeArea(thresholdShape);
+                    const thresholdShapeBounds = boundsForRawShape(thresholdShape);
+                    const thresholdBoundsFilled = (thresholdShapeBounds.x1 - thresholdShapeBounds.x0) * (thresholdShapeBounds.y1 + 1 - thresholdShapeBounds.y0);
+                    if (thresholdShapeArea / thresholdBoundsFilled > 0.98 && thresholdShapeBounds.x0 === 0 && thresholdShapeBounds.x1 === 120) {
+                        continue;
+                    }
+                    if (thresholdShapeArea > 300) {
+                        // At least one of the shapes should pass a size threshold:
+                        filteredMotion.add(motionShape);
+                        filteredThreshold.add(thresholdShape);
+                    }
+                }
+            }
+        }
+        // If there's no motion in the bottom half of the frame, but there is plenty of threshold, just add the threshold?
+        if (filteredMotion.size === 0 && filteredThreshold.size === 0) {
+            for (const thresholdShape of thresholdShapes) {
+                const thresholdShapeArea = rawShapeArea(thresholdShape);
+                const thresholdShapeBounds = boundsForRawShape(thresholdShape);
+                const thresholdBoundsFilled = (thresholdShapeBounds.x1 - thresholdShapeBounds.x0) * (thresholdShapeBounds.y1 + 1 - thresholdShapeBounds.y0);
+                if (thresholdShapeArea / thresholdBoundsFilled > 0.98 && thresholdShapeBounds.x0 === 0 && thresholdShapeBounds.x1 === 120) {
+                    continue;
+                }
+                if (thresholdShapeArea > 300 && !thresholdShape[0] && thresholdShapeBounds.x1 - thresholdShapeBounds.x0 < 120 - thermalRefWidth) {
+                    // At least one of the shapes should pass a size threshold:
+                    filteredThreshold.add(thresholdShape);
+                }
+            }
+        }
+
+        // Draw the filtered mask back into a canvas?
+        const newMask = new Uint8Array(160 * 120);
+        drawRawShapesIntoMask(Array.from(filteredMotion) as RawShape[], newMask, motionBit);
+        //drawRawShapesIntoMask(Array.from(filteredThreshold) as RawShape[], newMask, thresholdBit);
+        const solidThresholds = getSolidShapes(Array.from(filteredThreshold) as RawShape[]);
+        drawShapesIntoMask(solidThresholds, newMask, thresholdBit);
+        let mSum = 0;
+        let mPlusTSum = 0;
+        let tSum = 0;
+        let actionInBottomOfFrame  = 0;
+        for (let y = 0; y < 160; y++) {
+            for (let x = 0; x < 120; x++) {
+                const i = y * 120 + x;
+                const v = newMask[i];
+
+                if (sobel[i] !== 0) {
+                    newMask[i] |= edgeBit;
+                }
+
+                if (v & motionBit) {
+                    mSum++;
+                }
+                if (v & thresholdBit) {
+                    tSum++;
+                }
+                if (v & motionBit && v & thresholdBit) {
+                    mPlusTSum++;
+                }
+                if (y > 80 && v !== 0) {
+                    actionInBottomOfFrame++;
+                }
+            }
+        }
+
+        // Remove known thermal ref from mask (make this a factory calibration step)
+        for (let y = 99; y < 160; y++) {
+            for (let x = 91; x < 120; x++) {
+                const i = y * 120 + x;
+                newMask[i] = 0;
+            }
+        }
+
+        // Remove motion shapes that don't overlap a threshold.
+        // Remove threshold shapes that don't overlap some motion shape.
+
+        drawRawShapes(Array.from(filteredMotion) as RawShape[], frameNumber, motionCanvas);
+        //drawRawShapes(Array.from(filteredThreshold) as RawShape[], frameNumber, thresholdCanvas, 0x3300ffff);
+        drawShapes(solidThresholds, frameNumber, thresholdCanvas, 0x3300ffff);
+
+        const data = newMask;
+        const th2 = new Uint8Array(120*160);
+        let motionSum = 0;
+        let yellowSum = 0;
+        let lRedSum = 0;
+        let redSum = 0;
+        for (let y = 0; y < 160; y++) {
+            let prev = 0;
+            let opened = false;
+            let insideMotion = false;
+            let lineHasMotion = false;
+            for (let x = 0; x < 120; x++) {
+                const i = y * 120 + x;
+                const v = data[i];
+                if (prev === motionBit && !(v & motionBit)) {
+                    insideMotion = true;
+                }
+                else if (insideMotion && v === motionBit) {
+                    insideMotion = false;
+                }
+                if (v & motionBit && v && thresholdBit && v & edgeBit && prev === motionBit) {
+                    if (!allNeighboursEqual(x, y, data, motionBit)) {
+                        opened = true;
+                        yellowSum++;
+                    }
+
+                }
+                else if (v & motionBit && v & thresholdBit && prev === motionBit) {
+                    if (!allNeighboursEqual(x, y, data, motionBit)) {
+                        opened = true;
+                        yellowSum++;
+                    }
+
+                }
+                else if (v & motionBit && v && thresholdBit && v & edgeBit) {
+                    redSum++;
+                    //th2[i] = 255;
+                } else if (v & motionBit && v & thresholdBit) {
+                    lRedSum++;
+                    //th2[i] = 255;
+                } else if (v & motionBit && v & edgeBit) {
+                    // Never happens
+                    //image[i] = 0xff00ff00;
+                } else if (v & thresholdBit && v & edgeBit) {
+                    //image[i] = 0xffffffff;
+                } else if (v & motionBit) {
+                    if (opened) {
+                        if (prev & motionBit && prev && thresholdBit && prev & edgeBit) {
+                            if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
+                                yellowSum++
+                            }
+                        } else if (prev & motionBit && prev & thresholdBit) {
+                            if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
+                                yellowSum++
+                            }
+                        }
+                        //opened = false;
+                    }
+                    motionSum++;
+                    lineHasMotion = true;
+                }
+                prev = v;
+            }
+            prev = 0;
+            opened = false;
+            insideMotion = false;
+            for (let x = 0; x < 120; x++) {
+                const i = y * 120 + x;
+                const v = data[i];
+
+                if (prev === motionBit && !(v & motionBit)) {
+                    insideMotion = true;
+                }
+                else if (insideMotion && v === motionBit) {
+                    insideMotion = false;
+                }
+
+                if (v & motionBit && v && thresholdBit && v & edgeBit && prev === motionBit) {
+                }
+                else if (v & motionBit && v & thresholdBit && prev === motionBit) {
+                }
+                else if (v & motionBit && v && thresholdBit && v & edgeBit) {
+                    th2[i] = 255;
+                } else if (v & motionBit && v & thresholdBit) {
+                    th2[i] = 255;
+                } else if (v & motionBit && v & edgeBit) {
+                    // Never happens
+                } else if (v & thresholdBit && v & edgeBit) {
+                } else if (v & motionBit) { // No threshold bit set
+                } else if (v & thresholdBit && lineHasMotion && insideMotion) {
+                    // FIXME(jon): inside motion should not need to be opened or closed so long as the thresholded region doesn't
+                    // go to the edge of the frame
+                    th2[i] = 255; // green
+                }
+                prev = v;
+            }
+        }
+
+        const rawShapes = getRawShapes(th2, 120, 160);
+        const {shapes, didMerge: maybeHasGlasses} = preprocessShapes(rawShapes, frameNumber, thermalReference);
+        drawImage(sobelCanvas, analysisCanvas, newMask, frameNumber);
+        drawHistogram(hist, histogram, min, max, adjustedThreshold);
 
         const textState = document.createElement("div");
         textState.className = "text-state";
@@ -2169,13 +3066,14 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         let body = null;
         if (shapes.length) {
             body = largestShape(shapes);
+            //drawShapes([body], frameInfo.frame_number, analysisCanvas);
             if (body[body.length - 1].y < 159) {
-                body = extendToBottom(body);
+               // body = extendToBottom(body);
             }
             // TODO(jon): Fill gaps?
             // Thresholded
-            //drawShapes([body], frameInfo.frame_number, canvas);
-            face = extractFaceInfo(extendToBottom(body), radialSmoothed, analysisCanvas, maybeHasGlasses);
+            // drawShapes([body], frameInfo.frame_number, analysisCanvas);
+            //face = extractFaceInfo(extendToBottom(body), radialSmoothed, analysisCanvas, maybeHasGlasses);
 
             if (face) {
                 /*
@@ -2316,8 +3214,23 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             }
             //drawCurveFromPoints(pointsArray, canvas);
         }
+
         const prevState = screeningState;
-        const advanced = advanceState(face, body, prevFace, screeningState, screeningStateCount, threshold, radialSmoothed, thermalReference);
+
+        const motionStats: MotionStats = {
+            edge: yellowSum,
+            hotInner: lRedSum,
+            hotInnerEdge: redSum,
+            motion: mSum,
+            thresholded: tSum,
+            motionPlusThreshold: mPlusTSum,
+            actionInBottomHalf: actionInBottomOfFrame
+        }
+        const allMotion = motionStats.motion + motionStats.hotInnerEdge + motionStats.hotInner + motionStats.edge;
+        const advanced = advanceState(prevMotion, motionStats, face, body, prevFace, screeningState, screeningStateCount, threshold, radialSmoothed, thermalReference);
+
+        prevMotion = motionStats;
+
         if (advanced.state === ScreeningState.LEAVING) {
             seenBody = false;
         }
@@ -2341,8 +3254,14 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             ctx.arc(thermalReference.midX(), thermalReference.midY(), (thermalReference.x1 - thermalReference.x0) * 0.5, 0, Math.PI * 2);
             ctx.fill();
         }
-        textState.innerHTML = `#${frameNumber}, ${screeningState}(${screeningStateCount})<br>${seenBody && advanced.event ? `${(startTime/ 1000).toFixed(2)}s elapsed` : ''}<br>${advanced.event}<br>
-Threshold ${(thermalRefC + (threshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;`; //  ${face?.halfwayRatio}
+
+        //<br>${seenBody && advanced.event ? `${(startTime/ 1000).toFixed(2)}s elapsed` : ''}<br>${advanced.event}<br>
+
+        textState.innerHTML = `#${frameNumber}, ${screeningState}(${screeningStateCount})
+Threshold ${(thermalRefC + (adjustedThreshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;
+<br>Motion: ${mSum}<br>Threshold: ${tSum}<br>Both: ${mPlusTSum}<br>Bottom: ${actionInBottomOfFrame}`;
+`
+//<br>Motion: ${motionSum}<br>Red: ${redSum}<br>lRed: ${lRedSum}<br>Yellow: ${yellowSum}<br>ALL: ${allMotion}<br>LastFFC: ${((frameInfo.time_on - frameInfo.last_ffc_time) / 1000).toFixed(2)}s ago<br>Body: ${body && shapeArea(body)}`; //  ${face?.halfwayRatio}
         // Write the screening state out to a text block.
     }
 }
@@ -2378,10 +3297,20 @@ function faceIntersectsThermalRef(face: FaceInfo, thermalReference: ROIFeature |
         pointIsInQuad({x: thermalReference.x1, y: thermalReference.y1}, quad)
     );
 }
-
-function advanceState(face: FaceInfo | null, body: Shape | null, prevFace: FaceInfo | null,  screeningState: ScreeningState, screeningStateCount: number, threshold: number, radialSmoothed: Float32Array, thermalReference: ROIFeature | null): {prevFace: FaceInfo | null, state: ScreeningState, count: number, event: string} {
+interface MotionStats {
+    motion: number;
+    edge: number;
+    hotInner: number;
+    hotInnerEdge: number;
+    thresholded: number;
+    motionPlusThreshold: number;
+    actionInBottomHalf: number;
+}
+function advanceState(prevMotionStats: MotionStats, motionStats: MotionStats, face: FaceInfo | null, body: Shape | null, prevFace: FaceInfo | null,  screeningState: ScreeningState, screeningStateCount: number, threshold: number, radialSmoothed: Float32Array, thermalReference: ROIFeature | null): {prevFace: FaceInfo | null, state: ScreeningState, count: number, event: string} {
     let next;
     let event = "";
+    const prevAllMotion = prevMotionStats.motion + prevMotionStats.hotInnerEdge + prevMotionStats.hotInner + prevMotionStats.edge;
+    const allMotion = motionStats.motion + motionStats.hotInnerEdge + motionStats.hotInner + motionStats.edge;
     if (thermalReference === null) {
         next = advanceScreeningState(ScreeningState.MISSING_THERMAL_REF, screeningState, screeningStateCount);
     }
@@ -2448,15 +3377,26 @@ function advanceState(face: FaceInfo | null, body: Shape | null, prevFace: FaceI
         // }
         prevFace = face;
     } else {
-        if (!body) {
-            if (screeningState === ScreeningState.LEAVING) {
-                // Record event now that we have lost the face?
-                event = "Recorded";
-            }
-            // TODO(jon): If it advances from leaving to ready, save the current screening event out.
-            next = advanceScreeningState(ScreeningState.READY, screeningState, screeningStateCount);
-        } else {
+
+        // TODO(jon): Ignore stats around FFC, just say that it's thinking...
+
+        const hasBody = motionStats.actionInBottomHalf && (motionStats.motionPlusThreshold > 10 || motionStats.actionInBottomHalf > 500);
+        const prevFrameHasBody = prevMotionStats.actionInBottomHalf && (prevMotionStats.motionPlusThreshold > 10 || prevMotionStats.actionInBottomHalf > 500);
+        // TODO(jon): OR the threshold bounds are taller vertically than horizontally?
+        if (hasBody) {
             next = advanceScreeningState(ScreeningState.LARGE_BODY, screeningState, screeningStateCount);
+        }
+        else {
+            // Require 2 frames without a body before triggering leave event.
+            if (!prevFrameHasBody) {
+                if (screeningState === ScreeningState.LEAVING) {
+                    // Record event now that we have lost the face?
+                    event = "Recorded";
+                }
+                next = advanceScreeningState(ScreeningState.READY, screeningState, screeningStateCount);
+            } else {
+                next = advanceScreeningState(ScreeningState.LARGE_BODY, screeningState, screeningStateCount);
+            }
         }
         prevFace = null;
     }
