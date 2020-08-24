@@ -2129,11 +2129,15 @@ function advanceScreeningState(nextState, prevState, currentCount) {
     //     // "/cptv-files/20200729.104543.646.cptv",
     //     // "/cptv-files/20200729.105053.858.cptv"
     // ];
-    const files = [
-        //"/cptv-files/bunch of people downstairs 20200812.160746.324.cptv",
-        //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
-        "/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv",
-    ];
+    // const files: string[] = [
+    //     //"/cptv-files/bunch of people downstairs 20200812.160746.324.cptv",
+    //     //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
+    //     "/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv",
+    //     //"/cptv-files/20200716.153101.633.cptv",
+    //     //"/cptv-files/20200718.130508.586.cptv" - still bad
+    //     //"/cptv-files/20200718.130536.950.cptv"
+    // ];
+    const files = [];
     if (files.length) {
         const dropZone = document.getElementById("drop");
         if (dropZone) {
