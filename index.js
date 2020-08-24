@@ -2281,9 +2281,9 @@ async function renderFile(buffer, frameBuffer) {
         // if (frameNumber < 247 || frameNumber > 251) {
         //     continue;
         // }
-        if (frameNumber < 0 || frameNumber > 73) {
-            continue;
-        }
+        // if (frameNumber < 0 || frameNumber > 73) {
+        //     continue;
+        // }
         // if (frameNumber < 66 || frameNumber > 67) {
         //     continue;
         // }

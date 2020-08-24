@@ -2632,9 +2632,9 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         //     continue;
         // }
 
-        if (frameNumber < 0 || frameNumber > 73) {
-            continue;
-        }
+        // if (frameNumber < 0 || frameNumber > 73) {
+        //     continue;
+        // }
         // if (frameNumber < 66 || frameNumber > 67) {
         //     continue;
         // }
