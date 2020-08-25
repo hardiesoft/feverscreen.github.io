@@ -1,7 +1,7 @@
 import * as cptvPlayer from './cptv-player/cptv_player.js';
 import * as smooth from "./smooth/smooth.js";
 import * as curveFit from "./curve-fit/curve_fitting.js";
-import { concaveman, fastConvexHull } from "./concaveman.js";
+import { fastConvexHull } from "./concaveman.js";
 import DBScan from "./dbscan.js";
 import { detectThermalReference, edgeDetect, extractSensorValueForCircle } from "./feature-detection.js";
 import { ScreeningAcceptanceStates, ScreeningState } from './screening.js';
@@ -88,34 +88,17 @@ function raymarchFaceDims(l1, neckBaseMiddleP, body) {
         heightProbeP
     };
 }
-export function extractFaceInfo(body, radialSmoothed, canvas, maybeHasGlasses) {
-    const ctx = canvas.getContext('2d');
-    const widest = widestSpan(body.slice(Math.round((body.length / 3) * 2)));
-    const widestIndex = body.indexOf(widest);
-    const widestWidth = spanWidth(widest);
-    let halfWidth;
-    // Work from bottom and find first span that is past widest point, and is around 1/2 of the width.
-    // TODO(jon): Maybe we want to work our way further up and look for better candidates?
-    for (let i = widestIndex; i > 10; i--) {
-        const span = body[i];
-        if (widestWidth / 2 > spanWidth(span)) {
-            halfWidth = span;
-            break;
-        }
-    }
-    let left, right;
-    if (halfWidth) {
-        [left, right] = narrowestSlanted(body.slice(10), halfWidth);
-    }
-    else {
-        [left, right] = narrowestSpans(body.slice(10));
-    }
-    // drawPoint({x: left.x0, y: left.y}, canvas, halfWidth ? 'orange' : 'pink', 3);
-    // drawPoint({x: right.x1, y: right.y}, canvas, 'blue', 3);
+function getNeck(body) {
+    // Find the widest span from the last two thirds of the body.
+    const startSpan = body[Math.max(0, body.length - 14)];
+    const [left, right] = narrowestSlanted(body, startSpan);
+    return { left: { x: left.x0, y: left.y }, right: { x: right.x1, y: right.y } };
+}
+export function extractFaceInfo(neck, body, radialSmoothed, maybeHasGlasses) {
+    const { left, right } = neck;
     const startY = body[0].y;
-    const start = { x: left.x0, y: left.y };
-    const end = { x: right.x1, y: right.y };
-    const vec = { x: right.x1 - left.x0, y: right.y - left.y };
+    const start = left;
+    const vec = sub(right, left);
     const halfway = scale(vec, 0.5);
     const perpV = scale(perp(vec), 3);
     let neckBaseMiddleP = add(start, halfway);
@@ -137,7 +120,7 @@ export function extractFaceInfo(body, radialSmoothed, canvas, maybeHasGlasses) {
         leftSymmetry = dims.leftSymmetry;
         rightSymmetry = dims.rightSymmetry;
         heightProbeP = dims.heightProbeP;
-        if (!maybeHasGlasses) {
+        if (false && !maybeHasGlasses) {
             // Let's try and adjust the midline based on colder noses.
             const noseP = add(neckBaseMiddleP, scale(normMidline, scaleFactor * 0.4));
             const noseLeftP = add(noseP, scale(perpLeft, maxLeftScale));
@@ -208,7 +191,7 @@ export function extractFaceInfo(body, radialSmoothed, canvas, maybeHasGlasses) {
         const headWidth = magnitude(sub(bottomLeftP, bottomRightP));
         const headHeight = magnitude(sub(topLeftP, bottomLeftP));
         const widthHeightRatio = headWidth / headHeight;
-        const isValidHead = headHeight > headWidth && widthHeightRatio > 0.5;
+        const isValidHead = widthHeightRatio > 0.5;
         // TODO(jon): remove too small head areas.
         if (isValidHead) {
             // We only care about symmetry of the below forehead portion of the face, since above the eyes
@@ -441,6 +424,11 @@ const distanceSq = (a, b) => {
     const dY = a.y - b.y;
     return dX * dX + dY * dY;
 };
+const distanceSq2 = (a, b) => {
+    const dX = a[0] - b[0];
+    const dY = a[1] - b[1];
+    return dX * dX + dY * dY;
+};
 function widestSpan(shape) {
     let maxWidthSpan = shape[0];
     for (const span of shape) {
@@ -512,20 +500,26 @@ function narrowestSlanted(shape, start) {
             }
         }
     });
-    let { left, right, d: bestD, skew: bestSkew } = distances[0];
-    let i = 1;
-    while (Math.abs(Math.sqrt(distances[i].d) - Math.sqrt(bestD)) < 1) {
-        if (distances[i].skew < bestSkew) {
-            bestSkew = distances[i].skew;
-            left = distances[i].left;
-            right = distances[i].right;
+    if (distances.length) {
+        let { left, right, d: bestD, skew: bestSkew } = distances[0];
+        let i = 1;
+        while (Math.abs(Math.sqrt(distances[i].d) - Math.sqrt(bestD)) < 1) {
+            if (distances[i].skew < bestSkew) {
+                bestSkew = distances[i].skew;
+                left = distances[i].left;
+                right = distances[i].right;
+            }
+            i++;
+            if (i === distances.length) {
+                break;
+            }
         }
-        i++;
+        return [left, right];
     }
-    return [left, right];
+    return [start, start];
 }
 function narrowestSpans(shape) {
-    const narrowest = narrowestSpan(shape.slice(10));
+    const narrowest = narrowestSpan(shape);
     return narrowestSlanted(shape, narrowest);
 }
 function markWidest(shape) {
@@ -595,7 +589,7 @@ export function getHottestSpotInBounds(face, threshold, width, height, imageData
     const x1 = Math.ceil(Math.max(forehead.topRight.x, forehead.bottomRight.x));
     const y0 = Math.floor(Math.min(forehead.topLeft.y, forehead.topRight.y));
     const y1 = Math.ceil(Math.max(forehead.bottomLeft.y, forehead.bottomRight.y));
-    const idealCenter = add(forehead.top, scale(normalise(sub(forehead.bottom, forehead.top)), distance(forehead.bottom, forehead.top) * 0.8));
+    const idealCenter = add(forehead.top, scale(normalise(sub(forehead.bottom, forehead.top)), distance(forehead.bottom, forehead.top) * 0.9));
     let bestDistance = Number.MAX_SAFE_INTEGER;
     let bestPoint = { x: 0, y: 0 };
     let bestVal = 0;
@@ -643,15 +637,6 @@ export function getHottestSpotInBounds(face, threshold, width, height, imageData
 function drawFace(face, canvas, threshold, smoothedImageData) {
     const context = canvas.getContext('2d');
     if (face) {
-        // Now find the hotspot - only if we have a good lock!
-        if (face.headLock === 1.0) {
-            const point = getHottestSpotInBounds(face, threshold, 120, 160, smoothedImageData);
-            context.lineWidth = 1;
-            context.beginPath();
-            context.strokeStyle = "rgba(255, 0, 0, 1)";
-            context.arc(point.x - 0.5, point.y - 0.5, 2, 0, Math.PI * 2);
-            context.stroke();
-        }
         //context.lineWidth = 1;
         if (face.headLock === 1.0) {
             context.strokeStyle = "red";
@@ -673,6 +658,16 @@ function drawFace(face, canvas, threshold, smoothedImageData) {
         context.lineTo(face.vertical.top.x, face.vertical.top.y);
         context.moveTo(face.horizontal.left.x, face.horizontal.left.y);
         context.lineTo(face.horizontal.right.x, face.horizontal.right.y);
+        context.stroke();
+        if (face.headLock === 1.0) {
+            // Now find the hotspot - only if we have a good lock!
+            const point = getHottestSpotInBounds(face, threshold, 120, 160, smoothedImageData);
+            context.lineWidth = 1;
+            context.beginPath();
+            context.strokeStyle = "rgba(255, 255, 0, 1)";
+            context.arc(point.x - 0.5, point.y - 0.5, 3, 0, Math.PI * 2);
+            context.stroke();
+        }
         // context.moveTo(face.forehead.bottomLeft.x, face.forehead.bottomLeft.y);
         // context.lineTo(
         //   face.forehead.bottomRight.x,
@@ -680,7 +675,6 @@ function drawFace(face, canvas, threshold, smoothedImageData) {
         // );
         // context.moveTo(face.forehead.topLeft.x, face.forehead.topLeft.y);
         // context.lineTo(face.forehead.topRight.x, face.forehead.topRight.y);
-        context.stroke();
     }
 }
 function drawPoint(p, canvas, color = 'green', radius = 2) {
@@ -776,8 +770,7 @@ function drawRawShapesIntoMask(shapes, data, bit) {
         }
     }
 }
-function drawShapesIntoMask(shapes, data, bit) {
-    const width = 120;
+function drawShapesIntoMask(shapes, data, bit, width = 120) {
     for (const shape of shapes) {
         for (const span of shape) {
             let i = span.x0;
@@ -876,6 +869,16 @@ export function getRawShapes(thresholded, width, height, maskBit = 255) {
     }
     return shapes;
 }
+const rotate90u8 = (src, dest, width, height) => {
+    let i = 0;
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            dest[(x * height + y)] = src[i];
+            i++;
+        }
+    }
+    return dest;
+};
 const rotate90 = (src, dest) => {
     let i = 0;
     const width = 160;
@@ -1212,9 +1215,9 @@ export function preprocessShapes(frameShapes, frameNumber, thermalReference) {
             const boundsFilled = (shapeBounds.x1 + 1 - shapeBounds.x0) * (shapeBounds.y1 + 1 - shapeBounds.y0);
             const ratioFilled = area / boundsFilled;
             // TODO(jon): Can also check to see if the top of a shape is flat, or if the side is flat too etc.
-            if (ratioFilled > 0.9) {
-                //return false;
-            }
+            // if (ratioFilled > 0.9) {
+            //     return false;
+            // }
             const maxVariance = 5;
             return !(distance({ x: shapeBounds.x0, y: shapeBounds.y0 }, { x: thermalReference.x0, y: thermalReference.y0 }) < maxVariance &&
                 distance({ x: shapeBounds.x1, y: shapeBounds.y0 }, { x: thermalReference.x1, y: thermalReference.y0 }) < maxVariance &&
@@ -1339,7 +1342,6 @@ function drawImage(canvas, canvas2, data, frameNumber) {
     const ctx2 = canvas2.getContext('2d');
     const imageData = new ImageData(new Uint8ClampedArray(160 * 120 * 4), 120, 160);
     const image = new Uint32Array(imageData.data.buffer);
-    const edgePoints = [];
     const newMask = new Uint8Array(120 * 160);
     let pp = [];
     const yellow = 0xff00ffff;
@@ -1347,21 +1349,25 @@ function drawImage(canvas, canvas2, data, frameNumber) {
     const red = 0xff0000ff;
     const blue = 0xffff0000;
     const green = 0xff00ff00;
+    const ppp = [];
+    const colors = [
+        cyan,
+        red,
+        yellow,
+        blue,
+        green,
+    ];
     for (let y = 0; y < 160; y++) {
         let prev = 0;
-        let opened = false;
-        let hasMotion = false;
         for (let x = 0; x < 120; x++) {
             const i = y * 120 + x;
             const v = data[i];
-            if (v & motionBit) {
-                hasMotion = true;
-            }
+            // TODO(jon): Optimise
             if (x > 0 && prev === 0 && (v & thresholdBit)) {
-                //image[i] = red;
+                //
             }
             else if (prev & thresholdBit && v === 0) {
-                //image[i] = blue;
+                //
             }
             else if (v & edgeBit && v & thresholdBit && !allNeighboursEqual(x, y, data, edgeBit)) {
                 newMask[i] = 1;
@@ -1369,141 +1375,27 @@ function drawImage(canvas, canvas2, data, frameNumber) {
             else if (v & edgeBit && v & motionBit && !allNeighboursEqual(x, y, data, motionBit)) {
                 newMask[i] = 2;
             }
-            // if (v & motionBit && v && thresholdBit && v & edgeBit && prev === motionBit) {
-            //     if (!allNeighboursEqual(x, y, data, motionBit)) {
-            //         opened = true;
-            //         image[i] = yellow;
-            //         edgePoints.push({x, y});
-            //         pp.push([x, y]);
-            //     }
-            // }
-            // else if (v & motionBit && v & thresholdBit && prev === motionBit) {
-            //     if (!allNeighboursEqual(x, y, data, motionBit)) {
-            //         opened = true;
-            //         image[i] = yellow;
-            //         edgePoints.push({x, y});
-            //         pp.push([x, y]);
-            //     }
-            // }
-            // else if (v & motionBit && v && thresholdBit && v & edgeBit) {
-            //     //image[i] = 0xff0000ff; // Red
-            // } else if (v & motionBit && v & thresholdBit) {
-            //     //image[i] = 0x990000ff; // Blue
-            // } else if (v & motionBit && v & edgeBit) {
-            //     // Never happens
-            //     //image[i] = 0xff00ff00;
-            // } else if (v & thresholdBit && v & edgeBit) {
-            //     //image[i] = 0xffffffff;
-            // } else if (v & motionBit) { // No threshold bit set
-            //     //image[i] = 0xffffff00; // Cyan
-            //     if (opened) {
-            //         if (prev & motionBit && prev && thresholdBit && prev & edgeBit) {
-            //             if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
-            //                 image[i - 1] = yellow; // Red
-            //                 edgePoints.push({x: x - 1, y});
-            //                 pp.push([x - 1, y]);
-            //             }
-            //         } else if (prev & motionBit && prev & thresholdBit) {
-            //             if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
-            //                 image[i - 1] = yellow; // Blue
-            //                 edgePoints.push({x: x - 1, y});
-            //                 pp.push([x - 1, y]);
-            //             }
-            //         }
-            //         //opened = false;
-            //     }
-            // } else if (v & thresholdBit) {
-            //     //image[i] = 0x3300ff00; // green
-            // } //else if (v & edgeBit) {
-            // //     image[i] = 0x99ffffff; // Yellow
-            // // } else {
-            // //     image[i] = 0x00000000;
-            // // }
             prev = v;
         }
     }
-    const nnMask = new Uint8Array(120 * 160);
     for (let y = 0; y < 160; y++) {
         for (let x = 0; x < 120; x++) {
             const i = y * 120 + x;
             if (newMask[i] === 1 && localDensity(x, y, newMask, 1) >= 3) {
-                nnMask[i] = 1;
+                pp.push([x, y]);
             }
-            // if (newMask[i] === 2) {
-            //     nnMask[i] = 2;
-            // }
             else if (newMask[i] === 2 && localDensity(x, y, newMask, 2) >= 3) {
-                nnMask[i] = 2;
-            }
-            if (nnMask[i] === 1) {
-                //image[i] = cyan;
-                pp.push({ x, y });
-            }
-            else if (nnMask[i] === 2) {
-                //image[i] = yellow;
-                pp.push({ x, y });
+                pp.push([x, y]);
             }
         }
     }
     if (pp.length > 10) {
-        // TODO(jon): Also add the edges of the threshold to pp?
-        // TODO(jon): Work out the center of mass of pp, and then remove any points that are too far from it.
-        // let aX = 0;
-        // let aY = 0;
-        // for (const {x, y} of pp) {
-        //     aX += x;
-        //     aY += y;
-        // }
-        // const center = {x: aX / pp.length, y: aY / pp.length };
-        // const dP = pp.map(x => ({p: x, d: distanceSq(x, center)}));
-        // dP.sort((a, b) => a.p.x - b.p.x);
-        // const ppp: Set<Point> = new Set();
-        // let first = dP[0];
-        // // FIXME(jon): Sort by x, then y, then distance?  Look for gaps in x, look for gaps in y
-        // for (let i = 1; i < dP.length; i++) {
-        //     const dDiff = Math.abs(dP[i].p.x - first.p.x);
-        //     if (dDiff <= 5) {
-        //         ppp.add(dP[i].p);
-        //     } else {
-        //         break;
-        //     }
-        //     first = dP[i];
-        // }
-        //
-        // dP.sort((a, b) => a.p.y - b.p.y);
-        // first = dP[0];
-        // for (let i = 1; i < dP.length; i++) {
-        //     const dDiff = Math.abs(dP[i].p.y - first.p.y);
-        //     if (dDiff <= 5) {
-        //         ppp.add(dP[i].p);
-        //     } else {
-        //         break;
-        //     }
-        //     first = dP[i];
-        // }
-        // TODO(jon): Also remove small clusters? - Or check the distance from each cluster to the center of mass
-        //  of other clusters.
         const clusters = DBScan({
             dataset: pp,
             epsilon: 5 * 5,
-            distanceFunction: distanceSq,
+            distanceFunction: distanceSq2,
             minimumPoints: 3
         });
-        const largestCluster = (arr) => (arr.reduce((acc, val) => {
-            if (val.length > acc.length) {
-                return val;
-            }
-            return acc;
-        }, []));
-        // const ppp = [];
-        const colors = [
-            cyan,
-            red,
-            yellow,
-            blue,
-            green,
-        ];
-        const ppp = [];
         if (clusters.clusters.length) {
             let i = 0;
             for (const cluster of clusters.clusters) {
@@ -1511,16 +1403,16 @@ function drawImage(canvas, canvas2, data, frameNumber) {
                     let anyPointIsOnThresholdPlusMotion = false;
                     for (const pointIndex of cluster) {
                         const point = pp[pointIndex];
-                        const index = 120 * point.y + point.x;
+                        const index = 120 * point[1] + point[0];
                         const v = data[index];
-                        if (v & motionBit && v & thresholdBit) {
+                        if ((v & motionBit) && (v & thresholdBit)) {
                             anyPointIsOnThresholdPlusMotion = true;
                             break;
                         }
                     }
                     for (const pointIndex of cluster) {
                         const point = pp[pointIndex];
-                        const index = 120 * point.y + point.x;
+                        const index = 120 * point[1] + point[0];
                         if (anyPointIsOnThresholdPlusMotion) {
                             image[index] = colors[i % colors.length];
                             ppp.push(point);
@@ -1530,7 +1422,7 @@ function drawImage(canvas, canvas2, data, frameNumber) {
                 else {
                     for (const pointIndex of cluster) {
                         const point = pp[pointIndex];
-                        const index = 120 * point.y + point.x;
+                        const index = 120 * point[1] + point[0];
                         ppp.push(point);
                         image[index] = colors[i % colors.length];
                     }
@@ -1538,14 +1430,8 @@ function drawImage(canvas, canvas2, data, frameNumber) {
                 i++;
             }
         }
-        //pp = pp.filter((v, index) => !clusters.noise.includes(index));
-        // ctx2.beginPath();
-        // ctx2.fillStyle = 'red';
-        // ctx2.arc(center.x, center.y, 2, 0, Math.PI * 2);
-        // ctx2.fill();
-        //const concaveHull = concaveman(pp, 2);
         if (ppp.length > 15) {
-            let hull = fastConvexHull(ppp.map(({ x, y }) => [x, y]));
+            let hull = fastConvexHull(ppp);
             // Take the leftmost and right most points, and extend to the bottom:
             let minX = Number.MAX_SAFE_INTEGER;
             let maxX = 0;
@@ -1567,364 +1453,27 @@ function drawImage(canvas, canvas2, data, frameNumber) {
             let first = hull.findIndex(([x, y]) => y === 159);
             hull = [...hull.slice(first + 1), ...hull.slice(0, first + 1)].reverse();
             ctx2.beginPath();
-            ctx2.strokeStyle = 'rgba(255, 255, 255, 1)';
+            ctx2.strokeStyle = 'blue';
+            ctx2.fillStyle = 'rgba(0, 255, 0, 0.1)';
             ctx2.moveTo(hull[0][0], hull[0][1]);
             for (const [x, y] of hull.slice(1)) {
                 ctx2.lineTo(x, y);
             }
             ctx2.lineTo(hull[0][0], hull[0][1]);
+            ctx2.fill();
             ctx2.stroke();
-            if (false && hull.length > 4) {
-                const angleBetween = (a, b, c) => {
-                    let aa = { x: a[0], y: a[1] };
-                    let bb = { x: b[0], y: b[1] };
-                    let cc = { x: c[0], y: c[1] };
-                    let v1 = sub(bb, aa);
-                    let v2 = sub(cc, aa);
-                    const slopeDiff = (v1.y / v1.x) - (v2.y / v2.x);
-                    //debugger;
-                    //console.log(slopeDiff);
-                    return Math.abs(slopeDiff);
-                    //return Math.atan2(b[1], b[0]) - Math.atan2(a[1], a[0]);
-                };
-                const radToDeg = (rad) => (rad * (180 / Math.PI));
-                let kk = 0;
-                let leftInnerX = hull[kk][0];
-                while (Math.abs(hull[kk][0] - leftInnerX) < 3) {
-                    kk++;
-                }
-                kk--;
-                let l = hull[kk];
-                ctx2.beginPath();
-                ctx2.fillStyle = 'orange';
-                ctx2.arc(l[0], l[1], 2, 0, Math.PI * 2);
-                ctx2.fill();
-                kk++;
-                const maxAngle = 0.03;
-                const print = frameNumber === 27 || frameNumber === 28;
-                if (print) {
-                    console.log(kk, angleBetween(l, hull[kk + 1], hull[kk + 2]));
-                }
-                while (angleBetween(l, hull[kk + 1], hull[kk + 2]) < maxAngle && kk < hull.length - 1) {
-                    kk++;
-                }
-                const leftInner = hull[kk];
-                ctx2.beginPath();
-                ctx2.fillStyle = 'red';
-                ctx2.arc(leftInner[0], leftInner[1], 2, 0, Math.PI * 2);
-                ctx2.fill();
-                kk = hull.length - 1;
-                let rightInnerX = hull[kk][0];
-                while (Math.abs(hull[kk][0] - rightInnerX) < 3) {
-                    kk--;
-                }
-                kk++;
-                l = hull[kk];
-                ctx2.beginPath();
-                ctx2.fillStyle = 'orange';
-                ctx2.arc(l[0], l[1], 2, 0, Math.PI * 2);
-                ctx2.fill();
-                if (print) {
-                    console.log(kk, angleBetween(l, hull[kk - 1], hull[kk - 2]));
-                }
-                while (angleBetween(l, hull[kk - 1], hull[kk - 2]) < maxAngle && kk > 0) {
-                    kk--;
-                }
-                const rightInner = hull[kk];
-                ctx2.beginPath();
-                ctx2.fillStyle = 'green';
-                ctx2.arc(rightInner[0], rightInner[1], 2, 0, Math.PI * 2);
-                ctx2.fill();
-                // TODO(jon): Also make sure the angle between line segments is past a certain threshold, so the points are not sitting on a more-or-less straight line.
-                ctx2.beginPath();
-                ctx2.strokeStyle = 'blue';
-                ctx2.moveTo(leftInner[0], leftInner[1]);
-                ctx2.lineTo(rightInner[0], rightInner[1]);
-                ctx2.stroke();
-                //
-                //
-                // let k = 1;
-                //
-                // const leftInner = hull[k];
-                // k = hull.length - 1;
-                // l = hull[k];
-                // while (Math.abs(radToDeg(angleBetween(l, hull[k]))) < 0.1 && k > 1) {
-                //     k--;
-                // }
-                // const rightInner = hull[k];
-                //
-                // ctx2.beginPath();
-                // ctx2.fillStyle = 'green';
-                // ctx2.arc(rightInner[0], rightInner[1], 2, 0, Math.PI * 2);
-                // ctx2.fill();
-            }
-            /*
-            const pts = new Uint8Array(concaveHull.length * 2);
-            let ptr = 0;
-            for (let i = 0; i < concaveHull.length; i++) {
-                pts[ptr++] = concaveHull[i][0];
-                pts[ptr++] = concaveHull[i][1];
-            }
-            drawCurveFromPoints(pts, ctx2);
-            */
+            // Draw the convex hull, then take a mask from it:
         }
     }
-    if (false) {
-        edgePoints.sort((a, b) => {
-            const cmp = a.y - b.y;
-            if (cmp === 0) {
-                return a.x - b.x;
-            }
-            return cmp;
-        });
-        const distanceThreshold = 5 * 5;
-        const start = performance.now();
-        let ss = 0;
-        if (edgePoints.length) {
-            const dedupPSet = new Set();
-            for (const p of edgePoints) {
-                dedupPSet.add(JSON.stringify(p));
-            }
-            const edgePSet = new Set();
-            for (const p of dedupPSet) {
-                edgePSet.add(JSON.parse(p));
-            }
-            console.log(edgePSet.size, edgePoints.length);
-            // Take first point, then scan through y and split into sets?
-            let sets = [[edgePoints[0]]];
-            let lastPt = { x: 0, y: 0 };
-            for (const pt of edgePSet) {
-                console.assert(!pointsAreEqual(lastPt, pt));
-                lastPt = pt;
-                let matchedPrevSet = false;
-                for (const set of sets) {
-                    const lastP = set[set.length - 1];
-                    if (distanceSq(lastP, pt) < distanceThreshold && !pointIsInSet(pt, set)) {
-                        set.push(pt);
-                        console.assert(edgePSet.has(pt));
-                        console.assert(edgePSet.delete(pt));
-                        matchedPrevSet = true;
-                        break;
-                    }
-                }
-                if (!matchedPrevSet) {
-                    // Start a new set with curr
-                    edgePSet.delete(pt);
-                    sets.push([pt]);
-                }
-                //if (pt.y < 159) {
-                //for (const set of sets) {
-                /*
-                // TODO(jon): First look further ray-casting in the direction of the current set line/average.
-                // get the current average direction vector.
-                if (pointIsInSet(pt, set)) {
-                    continue;
-                }
-                if (set.length > 2) {
-                    // TODO(jon): Do we need to make this part of the set start from a zero origin for this to work
-                    //  properly?
-
-                    // TODO(jon): Detect the case where the segment is a straight line in x or y.
-                    const slice = set.slice(0, Math.min(5, set.length - 1));
-                    const firstX = slice[0].x;
-                    const firstY = slice[0].y;
-                    let sameX = true;
-                    let sameY = true;
-                    for (const p of slice.slice(1)) {
-                        if (p.x !== firstX) {
-                            sameX = false;
-                        }
-                        if (p.y !== firstY) {
-                            sameY = false;
-                        }
-                    }
-                    let dir;
-                    if (sameX) {
-                        dir = {x: 0, y: 1};
-                    } else if (sameY) {
-                        dir = {x: 1, y: 0};
-                    } else {
-                        const dd = directionOfSet(slice);
-                        //console.log(dd);
-                        dir = dd.v;
-                    }
-                    const startP = set[set.length - 1];
-                    //console.log('searching from ', startP, 'to join with ', pt, 'in ', dir);
-                    // Now ray-cast until we find something, or get too far away.
-
-                    // We should be trying to find an existing edge to join 'curr' to.
-
-                    // Maybe make a long line in the direction dir, and then look to see if at any stage
-                    // curr is < threshold distance from the line?
-                    const endP = add(startP, scale(dir, distanceThreshold));
-                    console.log("searching for match to", pt, 'from startP', startP);
-                    if (distToSegmentSquared(pt, startP, endP) < distanceThreshold) {
-                        ctx2.save();
-                        ctx2.beginPath();
-                        ctx2.strokeStyle = 'red';
-                        ctx.lineWidth = 0.5;
-                        ctx2.moveTo(startP.x, startP.y);
-                        ctx2.lineTo(endP.x, endP.y);
-                        ctx2.stroke();
-                        ctx2.beginPath();
-                        ctx2.fillStyle = 'blue';
-                        ctx2.arc(endP.x, endP.y, 1, 0, Math.PI * 2);
-                        ctx2.fill();
-                        ctx2.restore();
-                        // TODO(jon): Once we've found a join point, we can continue adding greedily from that
-                        //  point.
-                        console.log('joining', startP, pt);
-                        console.assert(edgePSet.delete(pt));
-                        console.assert(!edgePSet.has(pt));
-                        matchedPrevSet = true;
-                        set.push(pt);
-                        // TODO(jon): This doesn't seem to be breaking properly?
-                        break;
-                    }
-                }
-                */
-                //}
-                //}
-            }
-            // TODO(jon): At the end go through each length from the start, and try and merge sets to the ends of other lengths.
-            // At least, if two line set end-points are within 10px of each other, join them up?
-            let all = sets.filter(s => s.length > 3);
-            let allS = new Set();
-            for (const set of all) {
-                allS.add(set);
-            }
-            {
-                console.log("unmerged sets", allS.size, allS);
-                // Merging sets
-                for (const a of allS) {
-                    //console.log('finding matches for set', a);
-                    for (const b of allS) {
-                        if (a !== b) {
-                            const startPB = b[0];
-                            const endPB = b[b.length - 1];
-                            if (distanceSq(a[0], startPB) < 25 ||
-                                distanceSq(a[0], endPB) < 25 ||
-                                distanceSq(a[a.length - 1], startPB) < 25 ||
-                                distanceSq(a[a.length - 1], endPB) < 25) {
-                                console.log('mergin close endpoints');
-                                // merge.
-                                allS.delete(b);
-                                a.unshift(...b.reverse());
-                                break; // ?
-                            }
-                            const startSliceA = head(a).reverse();
-                            const endSliceA = tail(a);
-                            if (lineSetsJoin(startSliceA, startPB, ctx2)) {
-                                // merge.
-                                allS.delete(b);
-                                a.unshift(...b.reverse());
-                                break; // ?
-                            }
-                            else if (lineSetsJoin(startSliceA, endPB, ctx2)) {
-                                allS.delete(b);
-                                a.unshift(...b);
-                                break; // ?
-                            }
-                            else if (lineSetsJoin(endSliceA, startPB, ctx2)) {
-                                allS.delete(b);
-                                a.push(...b);
-                                break; // ?
-                            }
-                            else if (lineSetsJoin(endSliceA, endPB, ctx2)) {
-                                allS.delete(b);
-                                a.push(...b.reverse()); // ??
-                                break; // ?
-                            }
-                        }
-                    }
-                }
-                console.log("merged sets", allS.size);
-            }
-            for (const setA of allS) {
-                let b = boundsForConvexHull(setA);
-                for (const setB of allS) {
-                    if (setA !== setB) {
-                        const bB = boundsForConvexHull(setB);
-                        if (Math.abs(bB.y1 - b.y0) > 10 || Math.abs(bB.y0 - b.y1) > 10) {
-                            continue;
-                        }
-                        if (Math.abs(bB.x0 - b.x1) <= 10 || Math.abs(bB.x1 - b.x0) <= 10) {
-                            setA.push(...setB);
-                            allS.delete(setB);
-                            // TODO(jon): Union bounds, will be more efficient.
-                            b = boundsForConvexHull(setA);
-                        }
-                    }
-                }
-            }
-            // NOTE(jon): If there are two sets of reasonable length still, and each one has it's lowestY as the first element,
-            //  look at joining them as two sides of the same shape.
-            for (const set of allS) {
-            }
-            // If the boundingboxes are within 10 pixels in x of each other, join?
-            //const bounds = Array.from(allS).map(h => ({s: h, b: boundsForConvexHull(h)}));
-            const setsOfReasonableLength = Array.from(allS).filter(x => x.length > 30);
-            if (setsOfReasonableLength.length === 2) {
-                // const setOne = setsOfReasonableLength[0].sort((a, b) => a.y - b.y);
-                // const setTwo = setsOfReasonableLength[1].sort((a, b) => a.y - b.y);
-                setsOfReasonableLength[0].push(...setsOfReasonableLength[1]);
-                allS.delete(setsOfReasonableLength[1]);
-            }
-            console.log(allS);
-            // console.log(sets.reduce((acc, s) => acc + s.length, 0), edgePoints.length);
-            // console.log(sets);
-            const colors = [
-                0xffff00ff,
-                0xff0000ff,
-                0xffff0000,
-            ];
-            let c = 0;
-            for (const set of allS) {
-                //if (set.length > 30) {
-                const points = [];
-                const color = colors[c % colors.length];
-                // TODO(jon): Arrange lines to left and right of mid-point.
-                // Middle of the line set is the top-most y:
-                if (set.length > 50) {
-                    // Extend the set to the bottom of the frame.
-                    let start = set[0];
-                    let end = set[set.length - 1];
-                    console.log(JSON.stringify({ start, end }, null, '\t'));
-                    while (start.y < 159) {
-                        start = { x: start.x, y: start.y + 1 };
-                        set.unshift(start);
-                    }
-                    while (end.y < 159) {
-                        end = { x: end.x, y: end.y + 1 };
-                        set.push(end);
-                    }
-                    const bottom = boundsForConvexHull(set.filter(x => x.y == 159));
-                    for (let i = bottom.x0; i < bottom.x1; i++) {
-                        set.push({ x: i, y: 159 });
-                    }
-                    for (const { x, y } of set) {
-                        points.push([x, y]);
-                        image[y * 120 + x] = color;
-                    }
-                    const concaveHull = concaveman(points, 2);
-                    ctx2.beginPath();
-                    ctx2.strokeStyle = 'rgba(0, 255, 0, 1)';
-                    ctx2.moveTo(concaveHull[0][0], concaveHull[0][1]);
-                    for (const [x, y] of concaveHull.slice(1)) {
-                        ctx2.lineTo(x, y);
-                    }
-                    ctx2.stroke();
-                }
-                //}
-                c++;
-            }
-            // TODO(jon): Draw this
+    const imData = ctx2.getImageData(0, 0, 120, 160);
+    const d = new Uint32Array(imData.data.buffer);
+    for (let i = 0; i < d.length; i++) {
+        if (!(d[i] & 0x0000ff00)) { // TODO(jon): Make sure the pixel is not inside the thermal ref box
+            data[i] &= ~thresholdBit;
         }
-        const end = performance.now();
-        console.log('matching', end - start);
     }
-    //console.log('concave', end - ss);
     ctx.putImageData(imageData, 0, 0);
+    return ppp;
 }
 const maxSliceLength = 5;
 const minYIndex = (arr) => {
@@ -2129,11 +1678,15 @@ function advanceScreeningState(nextState, prevState, currentCount) {
     //     // "/cptv-files/20200729.104543.646.cptv",
     //     // "/cptv-files/20200729.105053.858.cptv"
     // ];
-    const files = [
-        //"/cptv-files/bunch of people downstairs 20200812.160746.324.cptv",
-        //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
-        "/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv",
-    ];
+    // const files: string[] = [
+    //     //"/cptv-files/bunch of people downstairs 20200812.160746.324.cptv",
+    //     //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
+    //     "/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv",
+    //     //"/cptv-files/20200716.153101.633.cptv",
+    //     //"/cptv-files/20200718.130508.586.cptv" - still bad
+    //     //"/cptv-files/20200718.130536.950.cptv"
+    // ];
+    const files = [];
     if (files.length) {
         const dropZone = document.getElementById("drop");
         if (dropZone) {
@@ -2253,9 +1806,6 @@ async function renderFile(buffer, frameBuffer) {
     const refImages = {};
     let prevFrame = null;
     let prevMotion = {
-        edge: 0,
-        hotInner: 0,
-        hotInnerEdge: 0,
         motion: 0,
         motionPlusThreshold: 0,
         actionInBottomHalf: 0,
@@ -2277,10 +1827,30 @@ async function renderFile(buffer, frameBuffer) {
         // if (frameNumber < 247 || frameNumber > 251) {
         //     continue;
         // }
-        if (frameNumber < 0 || frameNumber > 73) {
-            continue;
-        }
+        // if (frameNumber < 0 || frameNumber > 73) {
+        //     continue;
+        // }
+        // if (frameNumber < 25 || frameNumber > 27) {
+        //     continue;
+        // }
         // if (frameNumber < 66 || frameNumber > 67) {
+        //     continue;
+        // }
+        // if (frameNumber < 1066 || frameNumber > 1121) {
+        //     continue;
+        // }
+        //
+        // if (frameNumber < 1071 || frameNumber > 1074) {
+        //     continue;
+        // }
+        //
+        // if (frameNumber < 248 || frameNumber > 268) {
+        //     continue;
+        // }
+        // if (frameNumber < 1126 || frameNumber > 1139) {
+        //     continue;
+        // }
+        // if (frameNumber < 14 || frameNumber > 15) {
         //     continue;
         // }
         // if (frameNumber !== 313 && frameNumber !== 314) {
@@ -2533,114 +2103,13 @@ async function renderFile(buffer, frameBuffer) {
         // Remove motion shapes that don't overlap a threshold.
         // Remove threshold shapes that don't overlap some motion shape.
         drawRawShapes(Array.from(filteredMotion), frameNumber, motionCanvas);
-        //drawRawShapes(Array.from(filteredThreshold) as RawShape[], frameNumber, thresholdCanvas, 0x3300ffff);
-        drawShapes(solidThresholds, frameNumber, thresholdCanvas, 0x3300ffff);
         const data = newMask;
-        const th2 = new Uint8Array(120 * 160);
-        let motionSum = 0;
-        let yellowSum = 0;
-        let lRedSum = 0;
-        let redSum = 0;
-        for (let y = 0; y < 160; y++) {
-            let prev = 0;
-            let opened = false;
-            let insideMotion = false;
-            let lineHasMotion = false;
-            for (let x = 0; x < 120; x++) {
-                const i = y * 120 + x;
-                const v = data[i];
-                if (prev === motionBit && !(v & motionBit)) {
-                    insideMotion = true;
-                }
-                else if (insideMotion && v === motionBit) {
-                    insideMotion = false;
-                }
-                if (v & motionBit && v && thresholdBit && v & edgeBit && prev === motionBit) {
-                    if (!allNeighboursEqual(x, y, data, motionBit)) {
-                        opened = true;
-                        yellowSum++;
-                    }
-                }
-                else if (v & motionBit && v & thresholdBit && prev === motionBit) {
-                    if (!allNeighboursEqual(x, y, data, motionBit)) {
-                        opened = true;
-                        yellowSum++;
-                    }
-                }
-                else if (v & motionBit && v && thresholdBit && v & edgeBit) {
-                    redSum++;
-                    //th2[i] = 255;
-                }
-                else if (v & motionBit && v & thresholdBit) {
-                    lRedSum++;
-                    //th2[i] = 255;
-                }
-                else if (v & motionBit && v & edgeBit) {
-                    // Never happens
-                    //image[i] = 0xff00ff00;
-                }
-                else if (v & thresholdBit && v & edgeBit) {
-                    //image[i] = 0xffffffff;
-                }
-                else if (v & motionBit) {
-                    if (opened) {
-                        if (prev & motionBit && prev && thresholdBit && prev & edgeBit) {
-                            if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
-                                yellowSum++;
-                            }
-                        }
-                        else if (prev & motionBit && prev & thresholdBit) {
-                            if (!allNeighboursEqual(x - 1, y, data, motionBit)) {
-                                yellowSum++;
-                            }
-                        }
-                        //opened = false;
-                    }
-                    motionSum++;
-                    lineHasMotion = true;
-                }
-                prev = v;
-            }
-            prev = 0;
-            opened = false;
-            insideMotion = false;
-            for (let x = 0; x < 120; x++) {
-                const i = y * 120 + x;
-                const v = data[i];
-                if (prev === motionBit && !(v & motionBit)) {
-                    insideMotion = true;
-                }
-                else if (insideMotion && v === motionBit) {
-                    insideMotion = false;
-                }
-                if (v & motionBit && v && thresholdBit && v & edgeBit && prev === motionBit) {
-                }
-                else if (v & motionBit && v & thresholdBit && prev === motionBit) {
-                }
-                else if (v & motionBit && v && thresholdBit && v & edgeBit) {
-                    th2[i] = 255;
-                }
-                else if (v & motionBit && v & thresholdBit) {
-                    th2[i] = 255;
-                }
-                else if (v & motionBit && v & edgeBit) {
-                    // Never happens
-                }
-                else if (v & thresholdBit && v & edgeBit) {
-                }
-                else if (v & motionBit) { // No threshold bit set
-                }
-                else if (v & thresholdBit && lineHasMotion && insideMotion) {
-                    // FIXME(jon): inside motion should not need to be opened or closed so long as the thresholded region doesn't
-                    // go to the edge of the frame
-                    th2[i] = 255; // green
-                }
-                prev = v;
-            }
-        }
-        const rawShapes = getRawShapes(th2, 120, 160);
-        const { shapes, didMerge: maybeHasGlasses } = preprocessShapes(rawShapes, frameNumber, thermalReference);
-        drawImage(sobelCanvas, analysisCanvas, newMask, frameNumber);
+        const pointCloud = drawImage(sobelCanvas, analysisCanvas, data, frameNumber);
+        let approxHeadWidth = 0;
+        let rawShapes = getRawShapes(newMask, 120, 160, thresholdBit);
+        //drawRawShapes(rawShapes, frameInfo.frame_number, thresholdCanvas);
+        let { shapes, didMerge: maybeHasGlasses } = preprocessShapes(rawShapes, frameNumber, thermalReference);
+        //drawShapes(shapes, frameInfo.frame_number, thresholdCanvas);
         drawHistogram(hist, histogram, min, max, adjustedThreshold);
         const textState = document.createElement("div");
         textState.className = "text-state";
@@ -2663,24 +2132,152 @@ async function renderFile(buffer, frameBuffer) {
         let body = null;
         if (shapes.length) {
             body = largestShape(shapes);
-            //drawShapes([body], frameInfo.frame_number, analysisCanvas);
-            if (body[body.length - 1].y < 159) {
-                // body = extendToBottom(body);
+            {
+                // Fill gaps?
+                for (let i = 0; i < body.length; i++) {
+                    const startSpan = body[i];
+                    let startWidth = spanWidth(startSpan);
+                    let shouldFill = false;
+                    let startFillIndex = i;
+                    if (i + 1 >= body.length) {
+                        break;
+                    }
+                    if (frameNumber === 445) {
+                        console.log(i, startWidth, spanWidth(body[i + 1]), startWidth / spanWidth(body[i + 1]));
+                    }
+                    while (i + 1 < body.length && startWidth / spanWidth(body[i + 1]) > 2) {
+                        const sWidth = spanWidth(body[i]);
+                        shouldFill = true;
+                        i++;
+                    }
+                    if (shouldFill) {
+                        const endSpan = body[i];
+                        const endWidth = spanWidth(endSpan);
+                        const range = i - (startFillIndex + 1);
+                        const dX = endWidth - startWidth;
+                        const dX0 = endSpan.x0 - startSpan.x0;
+                        const dX1 = endSpan.x1 - startSpan.x1;
+                        const cX = dX / range;
+                        const cX0 = dX0 / range;
+                        const cX1 = dX1 / range;
+                        for (let j = startFillIndex + 1; j < i + 1; j++) {
+                            body[j].x0 = Math.min(startSpan.x0, endSpan.x0);
+                            body[j].x1 = Math.max(startSpan.x1, endSpan.x1);
+                        }
+                    }
+                }
             }
-            // TODO(jon): Fill gaps?
             // Thresholded
-            // drawShapes([body], frameInfo.frame_number, analysisCanvas);
-            //face = extractFaceInfo(extendToBottom(body), radialSmoothed, analysisCanvas, maybeHasGlasses);
-            if (face) {
+            const thMask = new Uint8Array(120 * 160);
+            const thMaskRot = new Uint8Array(120 * 160);
+            const nn = new Uint8Array(120 * 160);
+            drawShapesIntoMask([body], thMask, thresholdBit);
+            rotate90u8(thMask, thMaskRot, 120, 160);
+            const rotatedRaw = getRawShapes(thMaskRot, 160, 120, thresholdBit);
+            const solidRotated = getSolidShapes(rotatedRaw);
+            drawShapesIntoMask(solidRotated, thMask, 1 << 4, 160);
+            rotate90u8(thMask, nn, 160, 120);
+            const rotatedRaw2 = getSolidShapes(getRawShapes(nn, 120, 160, 1 << 4));
+            // Find the duplicates in y
+            drawShapes(rotatedRaw2, frameInfo.frame_number, thresholdCanvas);
+            const bod = largestShape(rotatedRaw2);
+            bod.sort((a, b) => (spanWidth(a) - spanWidth(b)));
+            const hist = {};
+            const maxWidth = spanWidth(widestSpan(bod));
+            for (const span of bod) {
+                const w = spanWidth(span);
+                if (w !== maxWidth) {
+                    if (!hist[w]) {
+                        hist[w] = 1;
+                    }
+                    else {
+                        hist[w]++;
+                    }
+                }
+            }
+            for (const [key, val] of Object.entries(hist)) {
+                if (val < 10) {
+                    delete hist[Number(key)];
+                }
+            }
+            // Try and find the smallest duplicate width with at least a count of 10
+            approxHeadWidth = Math.min(...Object.keys(hist).map(Number));
+            //console.log("Approx max head width", approxHeadWidth);
+            let neck = null;
+            if (approxHeadWidth > 0) {
+                // FIXME(jon) - this method of guessing head width doesn't always work, ie. if the person has long hair or a hood,
+                // and they don't have a bit where their face dips in again after flaring out.
+                // Maybe get the possible range that the neck can be in from the width at the top of the body convex hull?
+                const searchStart = Math.min(Math.ceil(approxHeadWidth), body.length - 1);
+                const searchEnd = Math.min(Math.ceil(approxHeadWidth * 1.7), body.length - 1);
+                const slice = body.slice(searchStart, searchEnd);
+                if (slice.length) {
+                    neck = getNeck(slice);
+                }
+            }
+            if (neck) {
+                // scale out neck left and right 10px.
+                const neckVec = sub(neck.right, neck.left);
+                const p0 = sub(neck.left, scale(normalise(neckVec), 15));
+                const p1 = add(neck.right, scale(normalise(neckVec), 15));
+                const neckLeft = add(p0, scale(normalise(perp(neckVec)), 100));
+                const neckRight = add(p1, scale(normalise(perp(neckVec)), 100));
+                // Now halve point-cloud above neck, make convex hull of head:
+                const newP = [[neck.left.x, neck.left.y], [neck.right.x, neck.right.y]];
+                for (const p of pointCloud.map(([x, y]) => ({ x, y }))) {
+                    if (pointIsLeftOfLine(neck.right, neck.left, p)) {
+                        // Discard points too far to the left of neck.left, or too far to the right of neck.right
+                        if (pointIsLeftOfLine(p0, neckLeft, p) && pointIsLeftOfLine(neckRight, p1, p)) {
+                            newP.push([p.x, p.y]);
+                        }
+                    }
+                }
+                const hull = fastConvexHull(newP);
+                const ctx = analysisCanvas.getContext('2d');
+                //ctx.clearRect(0, 0, 120, 160);
+                ctx.beginPath();
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
+                ctx.moveTo(hull[0][0], hull[0][1]);
+                for (const [x, y] of hull.slice(1)) {
+                    ctx.lineTo(x, y);
+                }
+                ctx.lineTo(hull[0][0], hull[0][1]);
+                ctx.fill();
+                const imData = ctx.getImageData(0, 0, 120, 160);
+                const d = new Uint32Array(imData.data.buffer);
+                for (let i = 0; i < d.length; i++) {
+                    if (!(d[i] & 0x000000ff)) {
+                        data[i] &= ~thresholdBit;
+                    }
+                }
                 /*
+                ctx.strokeStyle = 'red';
+                ctx.beginPath();
+                ctx.moveTo(p0.x, p0.y);
+                ctx.lineTo(neckLeft.x, neckLeft.y);
+                ctx.stroke();
+                ctx.strokeStyle = 'red';
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(neckRight.x, neckRight.y);
+                ctx.stroke();
+                 */
+                // Draw head hull into canvas context, mask out threshold bits we care about:
+                let rawShapes = getRawShapes(data, 120, 160, thresholdBit);
+                let { shapes, didMerge: maybeHasGlasses } = preprocessShapes(rawShapes, frameNumber, thermalReference);
+                //drawShapes(shapes, frameNumber, thresholdCanvas, 0x3300ffff);
+                const faceShape = largestShape(shapes);
                 ctx.lineWidth = 1;
                 ctx.strokeStyle = 'red';
                 ctx.beginPath();
-                ctx.moveTo(face.head.leftNeckSpan.x0, face.head.leftNeckSpan.y);
-                ctx.lineTo(face.head.rightNeckSpan.x1, face.head.rightNeckSpan.y);
+                ctx.moveTo(neck.left.x, neck.left.y);
+                ctx.lineTo(neck.right.x, neck.right.y);
                 ctx.stroke();
-                 */
+                if (faceShape.length) {
+                    face = extractFaceInfo(neck, faceShape, radialSmoothed, maybeHasGlasses);
+                }
             }
+            // TODO(jon): If half the face is off-frame, null out face.
         }
         if (seenBody) {
             startTime += (1000 / 8.7);
@@ -2708,17 +2305,18 @@ async function renderFile(buffer, frameBuffer) {
             }
             else { // face and body
                 if (faceArea(face) > 1500 && !faceIntersectsThermalRef(face, thermalReference)) {
-                    //drawFace(face, canvas, threshold, radialSmoothed);
+                    drawFace(face, analysisCanvas, adjustedThreshold, radialSmoothed);
                 }
                 else {
                     // TODO(jon): draw tracking oval of some kind.
+                    console.log(`${frameNumber}: area: ${faceArea(face)}`);
                 }
                 // Now get the neck left and right points, and create convex hulls of each side of the face.
                 const neckLeft = face.head.leftNeckSpan;
                 const neckRight = face.head.rightNeckSpan;
                 //const yCut = Math.round(Math.max(neckLeft.y, neckRight.y));
-                const cutIndexLeft = body.findIndex(span => span.y === neckLeft.y && span.x0 === neckLeft.x0);
-                const cutIndexRight = body.findIndex(span => span.y === neckRight.y && span.x1 === neckRight.x1);
+                const cutIndexLeft = body.findIndex(span => span.y === neckLeft.y && span.x0 === neckLeft.x);
+                const cutIndexRight = body.findIndex(span => span.y === neckRight.y && span.x1 === neckRight.x);
                 const headPoints = []; // All the left points above neckLeft, then all the right points above neckRight
                 for (let i = cutIndexLeft; i >= 0; i--) {
                     headPoints.push({ x: body[i].x0, y: body[i].y });
@@ -2803,15 +2401,11 @@ async function renderFile(buffer, frameBuffer) {
         }
         const prevState = screeningState;
         const motionStats = {
-            edge: yellowSum,
-            hotInner: lRedSum,
-            hotInnerEdge: redSum,
             motion: mSum,
             thresholded: tSum,
             motionPlusThreshold: mPlusTSum,
             actionInBottomHalf: actionInBottomOfFrame
         };
-        const allMotion = motionStats.motion + motionStats.hotInnerEdge + motionStats.hotInner + motionStats.edge;
         const advanced = advanceState(prevMotion, motionStats, face, body, prevFace, screeningState, screeningStateCount, threshold, radialSmoothed, thermalReference);
         prevMotion = motionStats;
         if (advanced.state === ScreeningState.LEAVING) {
@@ -2843,8 +2437,6 @@ async function renderFile(buffer, frameBuffer) {
         textState.innerHTML = `#${frameNumber}, ${screeningState}(${screeningStateCount})
 Threshold ${(thermalRefC + (adjustedThreshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;
 <br>Motion: ${mSum}<br>Threshold: ${tSum}<br>Both: ${mPlusTSum}<br>Bottom: ${actionInBottomOfFrame}`;
-        `
-//<br>Motion: ${motionSum}<br>Red: ${redSum}<br>lRed: ${lRedSum}<br>Yellow: ${yellowSum}<br>ALL: ${allMotion}<br>LastFFC: ${((frameInfo.time_on - frameInfo.last_ffc_time) / 1000).toFixed(2)}s ago<br>Body: ${body && shapeArea(body)}`; //  ${face?.halfwayRatio}
         // Write the screening state out to a text block.
     }
 }
@@ -2879,8 +2471,8 @@ function faceIntersectsThermalRef(face, thermalReference) {
 function advanceState(prevMotionStats, motionStats, face, body, prevFace, screeningState, screeningStateCount, threshold, radialSmoothed, thermalReference) {
     let next;
     let event = "";
-    const prevAllMotion = prevMotionStats.motion + prevMotionStats.hotInnerEdge + prevMotionStats.hotInner + prevMotionStats.edge;
-    const allMotion = motionStats.motion + motionStats.hotInnerEdge + motionStats.hotInner + motionStats.edge;
+    //const prevAllMotion = prevMotionStats.motion + prevMotionStats.hotInnerEdge + prevMotionStats.hotInner + prevMotionStats.edge;
+    //const allMotion = motionStats.motion + motionStats.hotInnerEdge + motionStats.hotInner + motionStats.edge;
     if (thermalReference === null) {
         next = advanceScreeningState(ScreeningState.MISSING_THERMAL_REF, screeningState, screeningStateCount);
     }
