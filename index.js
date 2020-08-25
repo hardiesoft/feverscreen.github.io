@@ -8,6 +8,8 @@ import { ScreeningAcceptanceStates, ScreeningState } from './screening.js';
 const motionBit = 1 << 7;
 const thresholdBit = 1 << 6;
 const edgeBit = 1 << 5;
+const minFrame = -1; //151;
+const maxFrame = -1; //195;
 function raymarchFaceDims(l1, neckBaseMiddleP, body) {
     let normMidline = normalise(sub(l1, neckBaseMiddleP));
     // TODO(jon): Discard boxes that are too long/wide ratio-wise.
@@ -1815,6 +1817,7 @@ async function renderFile(buffer, frameBuffer) {
         seenFrames.add(frameNumber);
         const frameInfo = cptvPlayer.getRawFrame(new Uint8Array(frameBuffer));
         frameNumber = frameInfo.frame_number;
+        performance.mark(`start frame ${frameNumber}`);
         // if (frameNumber !== 172 && frameNumber !== 173) {
         //     continue;
         // }
@@ -1850,9 +1853,12 @@ async function renderFile(buffer, frameBuffer) {
         // if (frameNumber < 1126 || frameNumber > 1139) {
         //     continue;
         // }
-        // if (frameNumber < 14 || frameNumber > 15) {
-        //     continue;
-        // }
+        if (minFrame !== -1 && frameNumber < minFrame) {
+            continue;
+        }
+        if (maxFrame !== -1 && frameNumber > maxFrame) {
+            break;
+        }
         // if (frameNumber !== 313 && frameNumber !== 314) {
         //     continue;
         // }
@@ -2072,6 +2078,13 @@ async function renderFile(buffer, frameBuffer) {
         let mPlusTSum = 0;
         let tSum = 0;
         let actionInBottomOfFrame = 0;
+        // Remove known thermal ref from mask (make this a factory calibration step)
+        for (let y = 99; y < 160; y++) {
+            for (let x = 91; x < 120; x++) {
+                const i = y * 120 + x;
+                newMask[i] = 0;
+            }
+        }
         for (let y = 0; y < 160; y++) {
             for (let x = 0; x < 120; x++) {
                 const i = y * 120 + x;
@@ -2093,24 +2106,7 @@ async function renderFile(buffer, frameBuffer) {
                 }
             }
         }
-        // Remove known thermal ref from mask (make this a factory calibration step)
-        for (let y = 99; y < 160; y++) {
-            for (let x = 91; x < 120; x++) {
-                const i = y * 120 + x;
-                newMask[i] = 0;
-            }
-        }
-        // Remove motion shapes that don't overlap a threshold.
-        // Remove threshold shapes that don't overlap some motion shape.
-        drawRawShapes(Array.from(filteredMotion), frameNumber, motionCanvas);
-        const data = newMask;
-        const pointCloud = drawImage(sobelCanvas, analysisCanvas, data, frameNumber);
-        let approxHeadWidth = 0;
-        let rawShapes = getRawShapes(newMask, 120, 160, thresholdBit);
-        //drawRawShapes(rawShapes, frameInfo.frame_number, thresholdCanvas);
-        let { shapes, didMerge: maybeHasGlasses } = preprocessShapes(rawShapes, frameNumber, thermalReference);
-        //drawShapes(shapes, frameInfo.frame_number, thresholdCanvas);
-        drawHistogram(hist, histogram, min, max, adjustedThreshold);
+        const hasBody = actionInBottomOfFrame && mPlusTSum > 45;
         const textState = document.createElement("div");
         textState.className = "text-state";
         div.appendChild(backgroundCanvas);
@@ -2122,282 +2118,292 @@ async function renderFile(buffer, frameBuffer) {
         div.appendChild(text);
         div.appendChild(textState);
         document.body.appendChild(div);
-        // TODO(jon) add the enter/scan/leave events annotated.
-        //  Make this into a drag and drop web interface, so others can test videos
-        //  Factor out shared modules.
-        // TODO(jon): If we have a big blob, but no torso reaching the bottom of the frame, could try
-        //  walking back up the histogram to earlier peaks?  Else to head detection from the top.
-        //const body = extendToBottom(largestShape(shapes));
         let face = null;
         let body = null;
-        if (shapes.length) {
-            body = largestShape(shapes);
-            {
-                // Fill gaps?
-                for (let i = 0; i < body.length; i++) {
-                    const startSpan = body[i];
-                    let startWidth = spanWidth(startSpan);
-                    let shouldFill = false;
-                    let startFillIndex = i;
-                    if (i + 1 >= body.length) {
-                        break;
-                    }
-                    if (frameNumber === 445) {
-                        console.log(i, startWidth, spanWidth(body[i + 1]), startWidth / spanWidth(body[i + 1]));
-                    }
-                    while (i + 1 < body.length && startWidth / spanWidth(body[i + 1]) > 2) {
-                        const sWidth = spanWidth(body[i]);
-                        shouldFill = true;
-                        i++;
-                    }
-                    if (shouldFill) {
-                        const endSpan = body[i];
-                        const endWidth = spanWidth(endSpan);
-                        const range = i - (startFillIndex + 1);
-                        const dX = endWidth - startWidth;
-                        const dX0 = endSpan.x0 - startSpan.x0;
-                        const dX1 = endSpan.x1 - startSpan.x1;
-                        const cX = dX / range;
-                        const cX0 = dX0 / range;
-                        const cX1 = dX1 / range;
-                        for (let j = startFillIndex + 1; j < i + 1; j++) {
-                            body[j].x0 = Math.min(startSpan.x0, endSpan.x0);
-                            body[j].x1 = Math.max(startSpan.x1, endSpan.x1);
+        if (hasBody && thermalReference) {
+            // Remove motion shapes that don't overlap a threshold.
+            // Remove threshold shapes that don't overlap some motion shape.
+            drawRawShapes(Array.from(filteredMotion), frameNumber, motionCanvas);
+            const data = newMask;
+            const pointCloud = drawImage(sobelCanvas, analysisCanvas, data, frameNumber);
+            let approxHeadWidth = 0;
+            let rawShapes = getRawShapes(newMask, 120, 160, thresholdBit);
+            //drawRawShapes(rawShapes, frameInfo.frame_number, thresholdCanvas);
+            let { shapes, didMerge: maybeHasGlasses } = preprocessShapes(rawShapes, frameNumber, thermalReference);
+            //drawShapes(shapes, frameInfo.frame_number, thresholdCanvas);
+            drawHistogram(hist, histogram, min, max, adjustedThreshold);
+            // TODO(jon) add the enter/scan/leave events annotated.
+            //  Make this into a drag and drop web interface, so others can test videos
+            //  Factor out shared modules.
+            // TODO(jon): If we have a big blob, but no torso reaching the bottom of the frame, could try
+            //  walking back up the histogram to earlier peaks?  Else to head detection from the top.
+            //const body = extendToBottom(largestShape(shapes));
+            if (shapes.length) {
+                body = largestShape(shapes);
+                {
+                    // Fill gaps?
+                    for (let i = 0; i < body.length; i++) {
+                        const startSpan = body[i];
+                        let startWidth = spanWidth(startSpan);
+                        let shouldFill = false;
+                        let startFillIndex = i;
+                        if (i + 1 >= body.length) {
+                            break;
+                        }
+                        while (i + 1 < body.length && startWidth / spanWidth(body[i + 1]) > 2) {
+                            const sWidth = spanWidth(body[i]);
+                            shouldFill = true;
+                            i++;
+                        }
+                        if (shouldFill) {
+                            const endSpan = body[i];
+                            const endWidth = spanWidth(endSpan);
+                            const range = i - (startFillIndex + 1);
+                            const dX = endWidth - startWidth;
+                            const dX0 = endSpan.x0 - startSpan.x0;
+                            const dX1 = endSpan.x1 - startSpan.x1;
+                            const cX = dX / range;
+                            const cX0 = dX0 / range;
+                            const cX1 = dX1 / range;
+                            for (let j = startFillIndex + 1; j < i + 1; j++) {
+                                body[j].x0 = Math.min(startSpan.x0, endSpan.x0);
+                                body[j].x1 = Math.max(startSpan.x1, endSpan.x1);
+                            }
                         }
                     }
                 }
+                // Thresholded
+                const thMask = new Uint8Array(120 * 160);
+                const thMaskRot = new Uint8Array(120 * 160);
+                const nn = new Uint8Array(120 * 160);
+                drawShapesIntoMask([body], thMask, thresholdBit);
+                rotate90u8(thMask, thMaskRot, 120, 160);
+                const rotatedRaw = getRawShapes(thMaskRot, 160, 120, thresholdBit);
+                const solidRotated = getSolidShapes(rotatedRaw);
+                drawShapesIntoMask(solidRotated, thMask, 1 << 4, 160);
+                rotate90u8(thMask, nn, 160, 120);
+                const rotatedRaw2 = getSolidShapes(getRawShapes(nn, 120, 160, 1 << 4));
+                // Find the duplicates in y
+                drawShapes(rotatedRaw2, frameInfo.frame_number, thresholdCanvas);
+                const bod = largestShape(rotatedRaw2);
+                bod.sort((a, b) => (spanWidth(a) - spanWidth(b)));
+                const hist = {};
+                const maxWidth = spanWidth(widestSpan(bod));
+                for (const span of bod) {
+                    const w = spanWidth(span);
+                    if (w !== maxWidth) {
+                        if (!hist[w]) {
+                            hist[w] = 1;
+                        }
+                        else {
+                            hist[w]++;
+                        }
+                    }
+                }
+                for (const [key, val] of Object.entries(hist)) {
+                    if (val < 10) {
+                        delete hist[Number(key)];
+                    }
+                }
+                // Try and find the smallest duplicate width with at least a count of 10
+                approxHeadWidth = Math.min(...Object.keys(hist).map(Number));
+                //console.log("Approx max head width", approxHeadWidth);
+                let neck = null;
+                if (approxHeadWidth > 0) {
+                    // FIXME(jon) - this method of guessing head width doesn't always work, ie. if the person has long hair or a hood,
+                    // and they don't have a bit where their face dips in again after flaring out.
+                    // Maybe get the possible range that the neck can be in from the width at the top of the body convex hull?
+                    const searchStart = Math.min(Math.ceil(approxHeadWidth), body.length - 1);
+                    const searchEnd = Math.min(Math.ceil(approxHeadWidth * 1.7), body.length - 1);
+                    const slice = body.slice(searchStart, searchEnd);
+                    if (slice.length) {
+                        neck = getNeck(slice);
+                    }
+                }
+                if (neck) {
+                    // scale out neck left and right 10px.
+                    const neckVec = sub(neck.right, neck.left);
+                    const p0 = sub(neck.left, scale(normalise(neckVec), 15));
+                    const p1 = add(neck.right, scale(normalise(neckVec), 15));
+                    const neckLeft = add(p0, scale(normalise(perp(neckVec)), 100));
+                    const neckRight = add(p1, scale(normalise(perp(neckVec)), 100));
+                    // Now halve point-cloud above neck, make convex hull of head:
+                    const newP = [[neck.left.x, neck.left.y], [neck.right.x, neck.right.y]];
+                    for (const p of pointCloud.map(([x, y]) => ({ x, y }))) {
+                        if (pointIsLeftOfLine(neck.right, neck.left, p)) {
+                            // Discard points too far to the left of neck.left, or too far to the right of neck.right
+                            if (pointIsLeftOfLine(p0, neckLeft, p) && pointIsLeftOfLine(neckRight, p1, p)) {
+                                newP.push([p.x, p.y]);
+                            }
+                        }
+                    }
+                    const hull = fastConvexHull(newP);
+                    const ctx = analysisCanvas.getContext('2d');
+                    //ctx.clearRect(0, 0, 120, 160);
+                    ctx.beginPath();
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
+                    ctx.moveTo(hull[0][0], hull[0][1]);
+                    for (const [x, y] of hull.slice(1)) {
+                        ctx.lineTo(x, y);
+                    }
+                    ctx.lineTo(hull[0][0], hull[0][1]);
+                    ctx.fill();
+                    const imData = ctx.getImageData(0, 0, 120, 160);
+                    const d = new Uint32Array(imData.data.buffer);
+                    for (let i = 0; i < d.length; i++) {
+                        if (!(d[i] & 0x000000ff)) {
+                            data[i] &= ~thresholdBit;
+                        }
+                    }
+                    /*
+                    ctx.strokeStyle = 'red';
+                    ctx.beginPath();
+                    ctx.moveTo(p0.x, p0.y);
+                    ctx.lineTo(neckLeft.x, neckLeft.y);
+                    ctx.stroke();
+                    ctx.strokeStyle = 'red';
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(neckRight.x, neckRight.y);
+                    ctx.stroke();
+                     */
+                    // Draw head hull into canvas context, mask out threshold bits we care about:
+                    let rawShapes = getRawShapes(data, 120, 160, thresholdBit);
+                    let { shapes, didMerge: maybeHasGlasses } = preprocessShapes(rawShapes, frameNumber, thermalReference);
+                    //drawShapes(shapes, frameNumber, thresholdCanvas, 0x3300ffff);
+                    const faceShape = largestShape(shapes);
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = 'red';
+                    ctx.beginPath();
+                    ctx.moveTo(neck.left.x, neck.left.y);
+                    ctx.lineTo(neck.right.x, neck.right.y);
+                    ctx.stroke();
+                    if (faceShape.length) {
+                        face = extractFaceInfo(neck, faceShape, radialSmoothed, maybeHasGlasses);
+                    }
+                }
+                // TODO(jon): If half the face is off-frame, null out face.
             }
-            // Thresholded
-            const thMask = new Uint8Array(120 * 160);
-            const thMaskRot = new Uint8Array(120 * 160);
-            const nn = new Uint8Array(120 * 160);
-            drawShapesIntoMask([body], thMask, thresholdBit);
-            rotate90u8(thMask, thMaskRot, 120, 160);
-            const rotatedRaw = getRawShapes(thMaskRot, 160, 120, thresholdBit);
-            const solidRotated = getSolidShapes(rotatedRaw);
-            drawShapesIntoMask(solidRotated, thMask, 1 << 4, 160);
-            rotate90u8(thMask, nn, 160, 120);
-            const rotatedRaw2 = getSolidShapes(getRawShapes(nn, 120, 160, 1 << 4));
-            // Find the duplicates in y
-            drawShapes(rotatedRaw2, frameInfo.frame_number, thresholdCanvas);
-            const bod = largestShape(rotatedRaw2);
-            bod.sort((a, b) => (spanWidth(a) - spanWidth(b)));
-            const hist = {};
-            const maxWidth = spanWidth(widestSpan(bod));
-            for (const span of bod) {
-                const w = spanWidth(span);
-                if (w !== maxWidth) {
-                    if (!hist[w]) {
-                        hist[w] = 1;
+            if (seenBody) {
+                startTime += (1000 / 8.7);
+            }
+            if (body) {
+                seenBody = true;
+            }
+            if (body) {
+                const torsoPoints = [];
+                let hulledTorso = [];
+                let outline = [];
+                if (!face) {
+                    // TODO(jon): Can we do a better job generating faces here, even if we only have a neck?
+                    //  Really just for our outlining.
+                    for (let i = 0; i < body.length; i++) {
+                        torsoPoints.push({ x: body[i].x0, y: body[i].y });
+                    }
+                    for (let i = 0; i < body.length; i++) {
+                        torsoPoints.push({ x: body[i].x1, y: body[i].y });
+                    }
+                    hulledTorso = convexHull(torsoPoints);
+                    for (const p of hulledTorso) {
+                        outline.push(p);
+                    }
+                }
+                else { // face and body
+                    if (faceArea(face) > 1500 && !faceIntersectsThermalRef(face, thermalReference)) {
+                        drawFace(face, analysisCanvas, adjustedThreshold, radialSmoothed);
                     }
                     else {
-                        hist[w]++;
+                        // TODO(jon): draw tracking oval of some kind.
+                        // console.log(`${frameNumber}: area: ${faceArea(face)}`);
                     }
-                }
-            }
-            for (const [key, val] of Object.entries(hist)) {
-                if (val < 10) {
-                    delete hist[Number(key)];
-                }
-            }
-            // Try and find the smallest duplicate width with at least a count of 10
-            approxHeadWidth = Math.min(...Object.keys(hist).map(Number));
-            //console.log("Approx max head width", approxHeadWidth);
-            let neck = null;
-            if (approxHeadWidth > 0) {
-                // FIXME(jon) - this method of guessing head width doesn't always work, ie. if the person has long hair or a hood,
-                // and they don't have a bit where their face dips in again after flaring out.
-                // Maybe get the possible range that the neck can be in from the width at the top of the body convex hull?
-                const searchStart = Math.min(Math.ceil(approxHeadWidth), body.length - 1);
-                const searchEnd = Math.min(Math.ceil(approxHeadWidth * 1.7), body.length - 1);
-                const slice = body.slice(searchStart, searchEnd);
-                if (slice.length) {
-                    neck = getNeck(slice);
-                }
-            }
-            if (neck) {
-                // scale out neck left and right 10px.
-                const neckVec = sub(neck.right, neck.left);
-                const p0 = sub(neck.left, scale(normalise(neckVec), 15));
-                const p1 = add(neck.right, scale(normalise(neckVec), 15));
-                const neckLeft = add(p0, scale(normalise(perp(neckVec)), 100));
-                const neckRight = add(p1, scale(normalise(perp(neckVec)), 100));
-                // Now halve point-cloud above neck, make convex hull of head:
-                const newP = [[neck.left.x, neck.left.y], [neck.right.x, neck.right.y]];
-                for (const p of pointCloud.map(([x, y]) => ({ x, y }))) {
-                    if (pointIsLeftOfLine(neck.right, neck.left, p)) {
-                        // Discard points too far to the left of neck.left, or too far to the right of neck.right
-                        if (pointIsLeftOfLine(p0, neckLeft, p) && pointIsLeftOfLine(neckRight, p1, p)) {
-                            newP.push([p.x, p.y]);
+                    // Now get the neck left and right points, and create convex hulls of each side of the face.
+                    const neckLeft = face.head.leftNeckSpan;
+                    const neckRight = face.head.rightNeckSpan;
+                    //const yCut = Math.round(Math.max(neckLeft.y, neckRight.y));
+                    const cutIndexLeft = body.findIndex(span => span.y === neckLeft.y && span.x0 === neckLeft.x);
+                    const cutIndexRight = body.findIndex(span => span.y === neckRight.y && span.x1 === neckRight.x);
+                    const headPoints = []; // All the left points above neckLeft, then all the right points above neckRight
+                    for (let i = cutIndexLeft; i >= 0; i--) {
+                        headPoints.push({ x: body[i].x0, y: body[i].y });
+                    }
+                    for (let i = 0; i <= cutIndexRight; i++) {
+                        headPoints.push({ x: body[i].x1, y: body[i].y });
+                    }
+                    const hulledHead = convexHull(convexHull(headPoints));
+                    hulledHead.pop();
+                    //console.log(hulledHead);
+                    for (let i = cutIndexLeft; i < body.length; i++) {
+                        torsoPoints.push({ x: body[i].x0, y: body[i].y });
+                    }
+                    for (let i = cutIndexRight; i < body.length; i++) {
+                        torsoPoints.push({ x: body[i].x1, y: body[i].y });
+                    }
+                    hulledTorso = convexHull(convexHull(torsoPoints));
+                    // This is just for creating the outline:
+                    // Find the bottomLeft and bottomRight points of the hulledHead
+                    const headBounds = boundsForConvexHull(hulledHead);
+                    const left = closestPoint({ x: headBounds.x0, y: headBounds.y1 }, hulledHead);
+                    const right = closestPoint({ x: headBounds.x1, y: headBounds.y1 }, hulledHead);
+                    // drawPoint(left, analysisCanvas);
+                    // drawPoint(right, analysisCanvas);
+                    const startIndexHead = hulledHead.indexOf(left); //, hulledHead.indexOf(right));
+                    const endIndexHead = hulledHead.indexOf(right);
+                    //const torsoLeft = closestPoint(left, hulledTorso);
+                    const torsoRight = closestPoint(right, hulledTorso);
+                    const startIndexTorso = hulledTorso.indexOf(torsoRight);
+                    for (let i = 0; i < endIndexHead; i++) {
+                        if (!outline.find(pt => pt.x == hulledHead[i].x && pt.y == hulledHead[i].y)) {
+                            outline.push(hulledHead[i]);
                         }
                     }
-                }
-                const hull = fastConvexHull(newP);
-                const ctx = analysisCanvas.getContext('2d');
-                //ctx.clearRect(0, 0, 120, 160);
-                ctx.beginPath();
-                ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
-                ctx.moveTo(hull[0][0], hull[0][1]);
-                for (const [x, y] of hull.slice(1)) {
-                    ctx.lineTo(x, y);
-                }
-                ctx.lineTo(hull[0][0], hull[0][1]);
-                ctx.fill();
-                const imData = ctx.getImageData(0, 0, 120, 160);
-                const d = new Uint32Array(imData.data.buffer);
-                for (let i = 0; i < d.length; i++) {
-                    if (!(d[i] & 0x000000ff)) {
-                        data[i] &= ~thresholdBit;
+                    for (let i = startIndexTorso; i < hulledTorso.length; i++) {
+                        if (!outline.find(pt => pt.x == hulledTorso[i].x && pt.y == hulledTorso[i].y)) {
+                            outline.push(hulledTorso[i]);
+                        }
                     }
-                }
-                /*
-                ctx.strokeStyle = 'red';
-                ctx.beginPath();
-                ctx.moveTo(p0.x, p0.y);
-                ctx.lineTo(neckLeft.x, neckLeft.y);
-                ctx.stroke();
-                ctx.strokeStyle = 'red';
-                ctx.beginPath();
-                ctx.moveTo(p1.x, p1.y);
-                ctx.lineTo(neckRight.x, neckRight.y);
-                ctx.stroke();
-                 */
-                // Draw head hull into canvas context, mask out threshold bits we care about:
-                let rawShapes = getRawShapes(data, 120, 160, thresholdBit);
-                let { shapes, didMerge: maybeHasGlasses } = preprocessShapes(rawShapes, frameNumber, thermalReference);
-                //drawShapes(shapes, frameNumber, thresholdCanvas, 0x3300ffff);
-                const faceShape = largestShape(shapes);
-                ctx.lineWidth = 1;
-                ctx.strokeStyle = 'red';
-                ctx.beginPath();
-                ctx.moveTo(neck.left.x, neck.left.y);
-                ctx.lineTo(neck.right.x, neck.right.y);
-                ctx.stroke();
-                if (faceShape.length) {
-                    face = extractFaceInfo(neck, faceShape, radialSmoothed, maybeHasGlasses);
-                }
-            }
-            // TODO(jon): If half the face is off-frame, null out face.
-        }
-        if (seenBody) {
-            startTime += (1000 / 8.7);
-        }
-        if (body) {
-            seenBody = true;
-        }
-        if (body) {
-            const torsoPoints = [];
-            let hulledTorso = [];
-            let outline = [];
-            if (!face) {
-                // TODO(jon): Can we do a better job generating faces here, even if we only have a neck?
-                //  Really just for our outlining.
-                for (let i = 0; i < body.length; i++) {
-                    torsoPoints.push({ x: body[i].x0, y: body[i].y });
-                }
-                for (let i = 0; i < body.length; i++) {
-                    torsoPoints.push({ x: body[i].x1, y: body[i].y });
-                }
-                hulledTorso = convexHull(torsoPoints);
-                for (const p of hulledTorso) {
-                    outline.push(p);
-                }
-            }
-            else { // face and body
-                if (faceArea(face) > 1500 && !faceIntersectsThermalRef(face, thermalReference)) {
-                    drawFace(face, analysisCanvas, adjustedThreshold, radialSmoothed);
-                }
-                else {
-                    // TODO(jon): draw tracking oval of some kind.
-                    console.log(`${frameNumber}: area: ${faceArea(face)}`);
-                }
-                // Now get the neck left and right points, and create convex hulls of each side of the face.
-                const neckLeft = face.head.leftNeckSpan;
-                const neckRight = face.head.rightNeckSpan;
-                //const yCut = Math.round(Math.max(neckLeft.y, neckRight.y));
-                const cutIndexLeft = body.findIndex(span => span.y === neckLeft.y && span.x0 === neckLeft.x);
-                const cutIndexRight = body.findIndex(span => span.y === neckRight.y && span.x1 === neckRight.x);
-                const headPoints = []; // All the left points above neckLeft, then all the right points above neckRight
-                for (let i = cutIndexLeft; i >= 0; i--) {
-                    headPoints.push({ x: body[i].x0, y: body[i].y });
-                }
-                for (let i = 0; i <= cutIndexRight; i++) {
-                    headPoints.push({ x: body[i].x1, y: body[i].y });
-                }
-                const hulledHead = convexHull(convexHull(headPoints));
-                hulledHead.pop();
-                //console.log(hulledHead);
-                for (let i = cutIndexLeft; i < body.length; i++) {
-                    torsoPoints.push({ x: body[i].x0, y: body[i].y });
-                }
-                for (let i = cutIndexRight; i < body.length; i++) {
-                    torsoPoints.push({ x: body[i].x1, y: body[i].y });
-                }
-                hulledTorso = convexHull(convexHull(torsoPoints));
-                // This is just for creating the outline:
-                // Find the bottomLeft and bottomRight points of the hulledHead
-                const headBounds = boundsForConvexHull(hulledHead);
-                const left = closestPoint({ x: headBounds.x0, y: headBounds.y1 }, hulledHead);
-                const right = closestPoint({ x: headBounds.x1, y: headBounds.y1 }, hulledHead);
-                // drawPoint(left, analysisCanvas);
-                // drawPoint(right, analysisCanvas);
-                const startIndexHead = hulledHead.indexOf(left); //, hulledHead.indexOf(right));
-                const endIndexHead = hulledHead.indexOf(right);
-                //const torsoLeft = closestPoint(left, hulledTorso);
-                const torsoRight = closestPoint(right, hulledTorso);
-                const startIndexTorso = hulledTorso.indexOf(torsoRight);
-                for (let i = 0; i < endIndexHead; i++) {
-                    if (!outline.find(pt => pt.x == hulledHead[i].x && pt.y == hulledHead[i].y)) {
-                        outline.push(hulledHead[i]);
+                    for (let i = 0; i < startIndexTorso; i++) {
+                        if (!outline.find(pt => pt.x == hulledTorso[i].x && pt.y == hulledTorso[i].y)) {
+                            outline.push(hulledTorso[i]);
+                        }
                     }
-                }
-                for (let i = startIndexTorso; i < hulledTorso.length; i++) {
-                    if (!outline.find(pt => pt.x == hulledTorso[i].x && pt.y == hulledTorso[i].y)) {
-                        outline.push(hulledTorso[i]);
+                    for (let i = startIndexHead; i < hulledHead.length; i++) {
+                        if (!outline.find(pt => pt.x == hulledHead[i].x && pt.y == hulledHead[i].y)) {
+                            outline.push(hulledHead[i]);
+                        }
                     }
+                    //drawCurve(shapes, canvas);
+                    //drawShapes(shapes, frameInfo.frame_number, canvas);
+                    //drawCurveFromPoints(pointsArray, canvas);
+                    //drawPoint(p, canvas);
                 }
-                for (let i = 0; i < startIndexTorso; i++) {
-                    if (!outline.find(pt => pt.x == hulledTorso[i].x && pt.y == hulledTorso[i].y)) {
-                        outline.push(hulledTorso[i]);
-                    }
+                //drawConvexShape(outline, frameInfo.frame_number, canvas);
+                // TODO(jon): Rasterize these points, so we get better curve fitting?
+                //  Another idea is just to subdivide the lines a few times?
+                // for (let i = 0; i < 5; i++) {
+                //     outline = subdivideOutline(outline);
+                // }
+                // TODO(jon): Get rid of outline corners
+                // Get the bottom left of the outline, use that as the start point,
+                // then travel around counter-clockwise until we reach the bottom again,
+                // or the side.
+                let startOutlineIndex = outline.indexOf(closestPoint({ x: 0, y: 160 }, outline));
+                let endOutlineIndex = outline.indexOf(closestPoint({ x: 120, y: 160 }, outline));
+                let n = [];
+                for (let i = startOutlineIndex; i < outline.length; i++) {
+                    n.push(outline[i]);
                 }
-                for (let i = startIndexHead; i < hulledHead.length; i++) {
-                    if (!outline.find(pt => pt.x == hulledHead[i].x && pt.y == hulledHead[i].y)) {
-                        outline.push(hulledHead[i]);
-                    }
+                for (let i = 0; i <= endOutlineIndex; i++) {
+                    n.push(outline[i]);
                 }
-                //drawCurve(shapes, canvas);
-                //drawShapes(shapes, frameInfo.frame_number, canvas);
+                outline = n;
+                const pointsArray = new Uint8Array(outline.length * 2);
+                let ptr = 0;
+                for (const point of outline) {
+                    pointsArray[ptr++] = point.x;
+                    pointsArray[ptr++] = point.y;
+                }
                 //drawCurveFromPoints(pointsArray, canvas);
-                //drawPoint(p, canvas);
             }
-            //drawConvexShape(outline, frameInfo.frame_number, canvas);
-            // TODO(jon): Rasterize these points, so we get better curve fitting?
-            //  Another idea is just to subdivide the lines a few times?
-            // for (let i = 0; i < 5; i++) {
-            //     outline = subdivideOutline(outline);
-            // }
-            // TODO(jon): Get rid of outline corners
-            // Get the bottom left of the outline, use that as the start point,
-            // then travel around counter-clockwise until we reach the bottom again,
-            // or the side.
-            let startOutlineIndex = outline.indexOf(closestPoint({ x: 0, y: 160 }, outline));
-            let endOutlineIndex = outline.indexOf(closestPoint({ x: 120, y: 160 }, outline));
-            let n = [];
-            for (let i = startOutlineIndex; i < outline.length; i++) {
-                n.push(outline[i]);
-            }
-            for (let i = 0; i <= endOutlineIndex; i++) {
-                n.push(outline[i]);
-            }
-            outline = n;
-            const pointsArray = new Uint8Array(outline.length * 2);
-            let ptr = 0;
-            for (const point of outline) {
-                pointsArray[ptr++] = point.x;
-                pointsArray[ptr++] = point.y;
-            }
-            //drawCurveFromPoints(pointsArray, canvas);
         }
         const prevState = screeningState;
         const motionStats = {
@@ -2438,6 +2444,8 @@ async function renderFile(buffer, frameBuffer) {
 Threshold ${(thermalRefC + (adjustedThreshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;
 <br>Motion: ${mSum}<br>Threshold: ${tSum}<br>Both: ${mPlusTSum}<br>Bottom: ${actionInBottomOfFrame}`;
         // Write the screening state out to a text block.
+        performance.mark(`end frame ${frameNumber}`);
+        performance.measure(`frame ${frameNumber}`, `start frame ${frameNumber}`, `end frame ${frameNumber}`);
     }
 }
 function subdivideOutline(outline) {
@@ -2538,8 +2546,8 @@ function advanceState(prevMotionStats, motionStats, face, body, prevFace, screen
     }
     else {
         // TODO(jon): Ignore stats around FFC, just say that it's thinking...
-        const hasBody = motionStats.actionInBottomHalf && (motionStats.motionPlusThreshold > 10 || motionStats.actionInBottomHalf > 500);
-        const prevFrameHasBody = prevMotionStats.actionInBottomHalf && (prevMotionStats.motionPlusThreshold > 10 || prevMotionStats.actionInBottomHalf > 500);
+        const hasBody = motionStats.actionInBottomHalf && (motionStats.motionPlusThreshold > 45);
+        const prevFrameHasBody = prevMotionStats.actionInBottomHalf && (prevMotionStats.motionPlusThreshold > 45);
         // TODO(jon): OR the threshold bounds are taller vertically than horizontally?
         if (hasBody) {
             next = advanceScreeningState(ScreeningState.LARGE_BODY, screeningState, screeningStateCount);
