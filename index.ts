@@ -1,11 +1,14 @@
 import * as cptvPlayer from './cptv-player/cptv_player.js';
 import * as smooth from "./smooth/smooth.js";
 import * as curveFit from "./curve-fit/curve_fitting.js";
-import {concaveman, fastConvexHull} from "./concaveman.js";
+// @ts-ignore
+import {fastConvexHull} from "./concaveman.js";
+// @ts-ignore
 import DBScan from "./dbscan.js";
 import {detectThermalReference, edgeDetect, extractSensorValueForCircle, ROIFeature} from "./feature-detection.js";
 import {ScreeningAcceptanceStates, ScreeningState} from './screening.js';
-import has = Reflect.has;
+import {add, magnitude, normalise, perp, scale, sub} from "./geom.js";
+import {raymarchFaceDims} from "./face-detection.js";
 
 const motionBit = 1 << 7;
 const thresholdBit = 1 << 6;
@@ -68,107 +71,6 @@ export interface Vec2 {
     y: number;
 }
 
-function raymarchFaceDims(l1: Point, neckBaseMiddleP: Point, body: Shape): {
-    normMidline: Vec2,
-    leftSymmetry: number[],
-    rightSymmetry: number[],
-    scaleFactor: number,
-    perpLeft: Vec2,
-    perpRight: Vec2,
-    maxLeftScale: number,
-    maxRightScale: number,
-    heightProbeP: Point,
-} {
-    let normMidline = normalise(sub(l1, neckBaseMiddleP));
-    // TODO(jon): Discard boxes that are too long/wide ratio-wise.
-
-    const perpLeft = normalise(perp(normMidline));
-    const perpRight = normalise(perp(perp(perp(normMidline))));
-
-    // TODO(jon): From the middle of the lower part of the face, march across and try to find the coldest point close
-    //  to the center, this is probably the nose, and we can use it to help find the center line of the face.
-
-    const startY = body[0].y;
-    // Keep going until there are no spans to the left or right, so ray-march left and then right.
-    let scaleFactor = 0;
-    let heightProbeP = neckBaseMiddleP;
-    let maxLeftScale = 0;
-    let maxRightScale = 0;
-    const maxHeightScale = magnitude({ x: WIDTH, y: HEIGHT });
-    const leftSymmetry = [];
-    const rightSymmetry = [];
-
-    while (scaleFactor < maxHeightScale) {
-        const scaled = scale(normMidline, scaleFactor);
-        heightProbeP = add(neckBaseMiddleP, scaled);
-        let foundLeft = false;
-        let foundRight = false;
-
-        for (let incLeft = 1; incLeft < 50; incLeft++) {
-            const probeP = add(heightProbeP, scale(perpLeft, incLeft));
-            const xInBounds = probeP.x >= 0 && probeP.x < WIDTH;
-            const probeY = Math.round(probeP.y);
-            const shapeIndex = probeY - startY;
-            if (shapeIndex < 0 || shapeIndex > body.length - 1) {
-                break;
-            }
-
-            if (xInBounds && body[shapeIndex]) {
-                if (
-                    body[shapeIndex].x0 < probeP.x &&
-                    body[shapeIndex].x1 > probeP.x
-                ) {
-                    //
-                    foundLeft = true;
-                    maxLeftScale = Math.max(incLeft, maxLeftScale);
-                }
-                if (body[shapeIndex].x0 > probeP.x) {
-                    break;
-                }
-            }
-        }
-        for (let incRight = 1; incRight < 50; incRight++) {
-            const probeP = add(heightProbeP, scale(perpRight, incRight));
-            const xInBounds = probeP.x >= 0 && probeP.x < WIDTH;
-            const probeY = Math.round(probeP.y);
-            const shapeIndex = probeY - startY;
-
-            if (shapeIndex < 0 || shapeIndex > body.length - 1) {
-                break;
-            }
-            if (xInBounds && body[shapeIndex]) {
-                if (
-                    body[shapeIndex].x1 > probeP.x &&
-                    body[shapeIndex].x0 < probeP.x
-                ) {
-                    foundRight = true;
-                    maxRightScale = Math.max(incRight, maxRightScale);
-                }
-                if (body[shapeIndex].x1 < probeP.x) {
-                    break;
-                }
-            }
-        }
-        leftSymmetry.push(maxLeftScale);
-        rightSymmetry.push(maxRightScale);
-        // symmetry.push([maxLeftScale, maxRightScale]);
-        if (!(foundLeft || foundRight)) {
-            break;
-        }
-        scaleFactor += 1;
-    }
-    return {
-        normMidline,
-        leftSymmetry,
-        rightSymmetry,
-        scaleFactor,
-        perpLeft,
-        perpRight,
-        maxLeftScale,
-        maxRightScale,
-        heightProbeP
-    }
-}
 
 function getNeck(body: Shape): {left: Point, right: Point} | null { //, maxYForNeck: number
     // Find the widest span from the last two thirds of the body.
@@ -409,8 +311,8 @@ export function extractFaceInfo(neck: {left: Point, right: Point}, body: Shape, 
     // TODO(jon): Separate case for animated outlines where we paint in irregularities in the head.
 }
 
-const WIDTH = 120;
-const HEIGHT = 160;
+export const WIDTH = 120;
+export const HEIGHT = 160;
 export type Shape = Span[];
 export type ImmutableShape = readonly Span[];
 
@@ -428,47 +330,6 @@ const pointIsLeftOfLine = (l0: Point, l1: Point, p: Point): boolean =>
 
 function isNotCeilingHeat(shape: Shape): boolean {
     return !(shape[0].y === 0 && shape.length < 80);
-}
-
-function magnitude(vec: Vec2): number {
-    return Math.sqrt(vec.x * vec.x + vec.y * vec.y);
-}
-
-function normalise(vec: Vec2): Vec2 {
-    const len = magnitude(vec);
-    return {
-        x: vec.x / len,
-        y: vec.y / len
-    };
-}
-
-function scale(vec: Vec2, scale: number): Vec2 {
-    return {
-        x: vec.x * scale,
-        y: vec.y * scale
-    };
-}
-
-function perp(vec: Vec2): Vec2 {
-    // noinspection JSSuspiciousNameCombination
-    return {
-        x: vec.y,
-        y: -vec.x
-    };
-}
-
-function add(a: Vec2, b: Vec2): Vec2 {
-    return {
-        x: a.x + b.x,
-        y: a.y + b.y
-    };
-}
-
-function sub(a: Vec2, b: Vec2): Vec2 {
-    return {
-        x: a.x - b.x,
-        y: a.y - b.y
-    };
 }
 
 function getSolidShapes(frameShapes: Array<Record<number, Shape>>): Shape[] {
@@ -1205,94 +1066,6 @@ function joinShapes(top: Shape, bottom: Shape, quad: Quad): Shape {
     return getSolidShapes([s])[0];
 }
 
-const convexHull = (points: Point[], print = false) => {
-    // return monotoneConvexHull2D(points).map(i => points[i]);
-    // Adapted from https://github.com/eatgrass/convexhull
-    // Sort by x and then y for tie-breaking
-    points = points.sort((a, b) => {
-        const dX = a.x - b.x;
-        if (dX === 0) {
-            // FIXME(jon): Is this the right order for y?
-            return a.y - b.y;
-        }
-        return dX;
-    });
-
-    let bot = 0;
-    let top = -1;
-    let hull = [];
-    let minMin = 0;
-    let xMin = points[0].x;
-
-    let i;
-    for (i = 1; i < points.length; i++) {
-        if(points[i].x !== xMin) {
-            break;
-        }
-    }
-
-    let minMax = i - 1;
-    if ( minMax === points.length - 1) {
-        hull[++top] = points[minMin];
-        if(points[minMax].y !== points[minMin].y)
-            hull[++top] = points[minMax];
-        hull[++top] = points[minMin];
-        return hull;
-    }
-
-    let maxMin, maxMax = points.length - 1;
-    let xMax = points[points.length - 1].x;
-
-    for (i = points.length -2; i >= 0; i--) {
-        if (points[i].x !== xMax) {
-            break;
-        }
-    }
-    maxMin = i + 1;
-    hull[++top] = points[minMin];
-    i = minMax;
-
-    while (++i <= maxMin) {
-        if (pointIsLeftOfOrOnLine(points[minMin],points[maxMin], points[i]) && i < maxMin) {
-            continue;
-        }
-        while (top > 0) {
-            if (pointIsLeftOfLine(hull[top - 1], hull[top], points[i])) { // Maybe missing a straight line case?
-                break;
-            } else {
-                top--;
-            }
-        }
-        hull[++top] = points[i];
-    }
-    if (maxMax !== maxMin) {
-        hull[++top] = points[maxMax];
-    }
-    bot = top;
-    i = maxMin;
-
-    while (--i >= minMax) {
-        if (pointIsLeftOfOrOnLine(points[maxMax], points[minMax], points[i]) && i > minMax) {
-            continue;
-        }
-        while (top > bot) {
-            if (pointIsLeftOfLine(hull[top - 1], hull[top], points[i])) {
-                break;
-            } else {
-                top--;
-            }
-        }
-        if (points[i].x === hull[0].x && points[i].y === hull[0].y) {
-            return hull;
-        }
-        hull[++top] = points[i];
-    }
-    if (minMax !== minMin) {
-        hull[++top] = points[minMin];
-    }
-    return hull;
-}
-
 type ConvexHull = Point[];
 
 function boundsForConvexHull(hull: ConvexHull): Rect {
@@ -1303,106 +1076,20 @@ function boundsForConvexHull(hull: ConvexHull): Rect {
     return {x0, x1, y0, y1};
 }
 
-function monotoneConvexHull2D(points: Point[]) {
-    const n = points.length;
-    if(n < 3) {
-        const result = new Array(n)
-        for(let i=0; i<n; ++i) {
-            result[i] = i;
-        }
-
-        if(n === 2 &&
-            points[0].x === points[1].y &&
-            points[0].x === points[1].y) {
-            return [0]
-        }
-        return result;
-    }
-
-    //Sort point indices along x-axis
-    const sorted = new Array(n)
-    for(let i = 0; i < n; ++i) {
-        sorted[i] = i;
-    }
-    sorted.sort(function(a,b) {
-        const d = points[a].x - points[b].x
-        if (d) {
-            return d
-        }
-        return points[a].y - points[b].y
-    })
-
-    //Construct upper and lower hulls
-    const lower = [sorted[0], sorted[1]];
-    const upper = [sorted[0], sorted[1]];
-
-    for(let i=2; i<n; ++i) {
-        let idx = sorted[i];
-        let p   = points[idx];
-
-        //Insert into lower list
-        let m = lower.length;
-        while(m > 1 && pointIsLeftOfOrOnLine(
-            points[lower[m-2]],
-            points[lower[m-1]],
-            p)) {
-            m -= 1
-            lower.pop()
-        }
-        lower.push(idx)
-
-        //Insert into upper list
-        m = upper.length
-        while(m > 1 && pointIsLeftOfOrOnLine(
-            points[upper[m-2]],
-            points[upper[m-1]],
-            p)) {
-            m -= 1
-            upper.pop()
-        }
-        upper.push(idx)
-    }
-
-    //Merge lists together
-    const result = new Array(upper.length + lower.length - 2);
-    let ptr    = 0
-    for(let i=0, nl=lower.length; i<nl; ++i) {
-        result[ptr++] = lower[i];
-    }
-    for(let j=upper.length-2; j>0; --j) {
-        result[ptr++] = upper[j];
-    }
-
-    //Return result
-    return result;
-}
-
 function convexHullForShape(shape: Shape): ConvexHull {
     const points = [];
     for (const span of shape) {
-        points.push({x: span.x0, y: span.y});
-        points.push({x: span.x1, y: span.y});
+        points.push([span.x0, span.y]);
+        points.push([span.x1, span.y]);
     }
-    return convexHull(points);
+    return fastConvexHull(points).map(([x, y]: [number, number]) => ({x, y}));
+}
+
+function convexHullForPoints(points: [number, number][]): ConvexHull {
+    return fastConvexHull(points).map(([x, y]: [number, number]) => ({x, y}));
     // TODO(jon): Need to "rasterize" the convex hull back to our span based form.
     //  Get the bounds of the convex hull, then iterate through each pixel and check whether or not they are outside
     //  the shape (maybe divide into triangles, and use pointInsideTriangle?)
-}
-
-function topPoints(hull: ConvexHull): {left: Point, right: Point} {
-    const topY = hull.reduce((minY, {y}) => (y < minY ? y : minY), Number.MAX_SAFE_INTEGER);
-    const topPoints = hull.filter(({y}) => (y - topY <= 20));
-    const left = topPoints.reduce((best, curr) => (curr.x < best.x ? curr : best), {x: Number.MAX_SAFE_INTEGER, y: 0});
-    const right = topPoints.reduce((best, curr) => (curr.x > best.x ? curr : best), {x: 0, y: 0});
-    return {left, right};
-}
-
-function bottomPoints(hull: ConvexHull): {left: Point, right: Point} {
-    const bottomY = hull.reduce((maxY, {y}) => (y > maxY ? y : maxY), 0);
-    const bottomPoints = hull.filter(({y}) => (bottomY - y <= 20));
-    const left = bottomPoints.reduce((best, curr) => (curr.x < best.x ? curr : best), {x: Number.MAX_SAFE_INTEGER, y: 0});
-    const right = bottomPoints.reduce((best, curr) => (curr.x > best.x ? curr : best), {x: 0, y: 0});
-    return {left, right};
 }
 
 function closestPoint(point: Point, points: Point[]): Point {
@@ -1742,7 +1429,7 @@ function drawImage(canvas: HTMLCanvasElement, canvas2: HTMLCanvasElement, data: 
             hull.splice(1, rightIndex - 1);
             hull.splice(1, 0, [hull[0][0], 159], [hull[1][0], 159]);
 
-            let first = hull.findIndex(([x, y]) => y === 159);
+            let first = hull.findIndex(([x, y]: [number, number]) => y === 159);
             hull = [...hull.slice(first + 1), ...hull.slice(0, first + 1)].reverse();
             ctx2.beginPath();
             ctx2.strokeStyle = 'blue';
@@ -1999,7 +1686,7 @@ function advanceScreeningState(nextState: ScreeningState, prevState: ScreeningSt
     //     //"/cptv-files/20200718.130508.586.cptv" - still bad
     //     //"/cptv-files/20200718.130536.950.cptv"
     // ];
-    const files = [];
+    const files: string[] = [];
     if (files.length) {
         const dropZone = document.getElementById("drop");
         if (dropZone) {
@@ -2685,22 +2372,22 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             }
 
             if (body) {
-                const torsoPoints = [];
-                let hulledTorso: Point[] = [];
+                const torsoPoints: [number, number][] = [];
+                let hulledTorso: [number, number][] = [];
                 let outline: Point[] = [];
                 if (!face) {
                     // TODO(jon): Can we do a better job generating faces here, even if we only have a neck?
                     //  Really just for our outlining.
                     for (let i = 0; i < body.length; i++) {
-                        torsoPoints.push({x: body[i].x0, y: body[i].y});
+                        torsoPoints.push([body[i].x0, body[i].y]);
                     }
                     for (let i = 0; i < body.length; i++) {
-                        torsoPoints.push({x: body[i].x1, y: body[i].y});
+                        torsoPoints.push([body[i].x1, body[i].y]);
                     }
-                    hulledTorso = convexHull(torsoPoints);
-                    for (const p of hulledTorso) {
-                        outline.push(p);
-                    }
+                    hulledTorso = fastConvexHull(torsoPoints);
+                    // for (const p of hulledTorso) {
+                    //     outline.push(p);
+                    // }
                 } else { // face and body
                     if (faceArea(face) > 1500 && !faceIntersectsThermalRef(face, thermalReference)) {
                         drawFace(face, analysisCanvas, adjustedThreshold, radialSmoothed);
@@ -2708,101 +2395,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
                         // TODO(jon): draw tracking oval of some kind.
                         // console.log(`${frameNumber}: area: ${faceArea(face)}`);
                     }
-
-
-                    // Now get the neck left and right points, and create convex hulls of each side of the face.
-                    const neckLeft = face.head.leftNeckSpan;
-                    const neckRight = face.head.rightNeckSpan;
-                    //const yCut = Math.round(Math.max(neckLeft.y, neckRight.y));
-                    const cutIndexLeft = body.findIndex(span => span.y === neckLeft.y && span.x0 === neckLeft.x);
-                    const cutIndexRight = body.findIndex(span => span.y === neckRight.y && span.x1 === neckRight.x);
-                    const headPoints = []; // All the left points above neckLeft, then all the right points above neckRight
-                    for (let i = cutIndexLeft; i >= 0; i--) {
-                        headPoints.push({x: body[i].x0, y: body[i].y});
-                    }
-                    for (let i = 0; i <= cutIndexRight; i++) {
-                        headPoints.push({x: body[i].x1, y: body[i].y});
-                    }
-                    const hulledHead = convexHull(convexHull(headPoints));
-                    hulledHead.pop();
-                    //console.log(hulledHead);
-                    for (let i = cutIndexLeft; i < body.length; i++) {
-                        torsoPoints.push({x: body[i].x0, y: body[i].y});
-                    }
-                    for (let i = cutIndexRight; i < body.length; i++) {
-                        torsoPoints.push({x: body[i].x1, y: body[i].y});
-                    }
-                    hulledTorso = convexHull(convexHull(torsoPoints));
-                    // This is just for creating the outline:
-
-
-                    // Find the bottomLeft and bottomRight points of the hulledHead
-                    const headBounds = boundsForConvexHull(hulledHead);
-                    const left = closestPoint({x: headBounds.x0, y: headBounds.y1}, hulledHead);
-                    const right = closestPoint({x: headBounds.x1, y: headBounds.y1}, hulledHead);
-                    // drawPoint(left, analysisCanvas);
-                    // drawPoint(right, analysisCanvas);
-                    const startIndexHead = hulledHead.indexOf(left);//, hulledHead.indexOf(right));
-                    const endIndexHead = hulledHead.indexOf(right);
-                    //const torsoLeft = closestPoint(left, hulledTorso);
-                    const torsoRight = closestPoint(right, hulledTorso);
-                    const startIndexTorso = hulledTorso.indexOf(torsoRight);
-                    for (let i = 0; i < endIndexHead; i++) {
-                        if (!outline.find(pt => pt.x == hulledHead[i].x && pt.y == hulledHead[i].y)) {
-                            outline.push(hulledHead[i]);
-                        }
-                    }
-                    for (let i = startIndexTorso; i < hulledTorso.length; i++) {
-                        if (!outline.find(pt => pt.x == hulledTorso[i].x && pt.y == hulledTorso[i].y)) {
-                            outline.push(hulledTorso[i]);
-                        }
-                    }
-                    for (let i = 0; i < startIndexTorso; i++) {
-                        if (!outline.find(pt => pt.x == hulledTorso[i].x && pt.y == hulledTorso[i].y)) {
-                            outline.push(hulledTorso[i]);
-                        }
-                    }
-                    for (let i = startIndexHead; i < hulledHead.length; i++) {
-                        if (!outline.find(pt => pt.x == hulledHead[i].x && pt.y == hulledHead[i].y)) {
-                            outline.push(hulledHead[i]);
-                        }
-                    }
-                    //drawCurve(shapes, canvas);
-                    //drawShapes(shapes, frameInfo.frame_number, canvas);
-
-                    //drawCurveFromPoints(pointsArray, canvas);
-                    //drawPoint(p, canvas);
                 }
-                //drawConvexShape(outline, frameInfo.frame_number, canvas);
-
-                // TODO(jon): Rasterize these points, so we get better curve fitting?
-                //  Another idea is just to subdivide the lines a few times?
-                // for (let i = 0; i < 5; i++) {
-                //     outline = subdivideOutline(outline);
-                // }
-
-                // TODO(jon): Get rid of outline corners
-                // Get the bottom left of the outline, use that as the start point,
-                // then travel around counter-clockwise until we reach the bottom again,
-                // or the side.
-                let startOutlineIndex = outline.indexOf(closestPoint({x: 0, y: 160}, outline));
-                let endOutlineIndex = outline.indexOf(closestPoint({x: 120, y: 160}, outline));
-                let n = [];
-                for (let i = startOutlineIndex; i < outline.length; i++) {
-                    n.push(outline[i]);
-                }
-                for (let i = 0; i <= endOutlineIndex; i++) {
-                    n.push(outline[i]);
-                }
-                outline = n;
-
-                const pointsArray = new Uint8Array(outline.length * 2);
-                let ptr = 0;
-                for (const point of outline) {
-                    pointsArray[ptr++] = point.x;
-                    pointsArray[ptr++] = point.y;
-                }
-                //drawCurveFromPoints(pointsArray, canvas);
             }
         }
 
