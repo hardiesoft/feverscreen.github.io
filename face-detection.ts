@@ -1,5 +1,5 @@
-import {HEIGHT, Point, Shape, Vec2, WIDTH} from "./index.js";
-import {add, magnitude, normalise, perp, scale, sub} from "./geom.js";
+import {HEIGHT, WIDTH} from "./index.js";
+import {add, magnitude, normalise, perp, Point, scale, Shape, sub, Vec2} from "./geom.js";
 
 export function raymarchFaceDims(l1: Point, neckBaseMiddleP: Point, body: Shape): {
     normMidline: Vec2,

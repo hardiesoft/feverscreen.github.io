@@ -97,10 +97,11 @@ export function circleDetect(source, frameWidth, frameHeight) {
     let bestX = 0;
     let bestY = 0;
     // TODO(jon): We should be able to know what the max radius we're looking for is.
-    while (radius < 20) {
+    while (radius < 8) {
         let value = 0;
         let cx = 0;
         let cy = 0;
+        // There are two places to search only:
         [value, cx, cy] = circleDetectRadius(source, dest, radius, frameWidth, frameHeight, 2, 2, frameWidth - 2, frameHeight - 2);
         if (bestValue < value) {
             bestValue = value;
@@ -311,25 +312,19 @@ function circleStillPresent(r, saltPepperData, edgeData, frameWidth, frameHeight
     return true;
 }
 export function detectThermalReference(saltPepperData, smoothedData, previousThermalReference, frameWidth, frameHeight) {
-    performance.mark("ed start");
     const edgeData = edgeDetect(smoothedData, frameWidth, frameHeight);
-    performance.mark("ed end");
-    performance.measure("edge detection", "ed start", "ed end");
-    performance.mark("cd start");
     if (previousThermalReference &&
         circleStillPresent(previousThermalReference, saltPepperData, edgeData, frameWidth, frameHeight)) {
-        return previousThermalReference;
+        return { r: previousThermalReference, edgeData };
     }
     const [bestRadius, bestX, bestY] = circleDetect(edgeData, frameWidth, frameHeight);
-    if (bestRadius <= 4 || bestRadius >= 6) {
-        return null;
+    if (bestRadius <= 4 || bestRadius > 7) {
+        return { r: null, edgeData };
     }
     const r = new ROIFeature();
     r.x0 = bestX - bestRadius;
     r.y0 = bestY - bestRadius;
     r.x1 = bestX + bestRadius;
     r.y1 = bestY + bestRadius;
-    performance.mark("cd end");
-    performance.measure("circle detection", "cd start", "cd end");
-    return r;
+    return { edgeData, r };
 }
