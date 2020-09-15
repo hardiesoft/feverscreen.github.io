@@ -11,5 +11,5 @@
   ],
   "module": "smooth.js",
   "types": "smooth.d.ts",
-  "sideEffects": "false"
+  "sideEffects": false
 }

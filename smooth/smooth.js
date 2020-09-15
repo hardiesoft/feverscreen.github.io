@@ -81,17 +81,39 @@ function addBorrowedObject(obj) {
     return stack_pointer;
 }
 /**
-* @param {Float32Array} input_frame
-* @param {any} num_buckets
+* @param {Uint16Array} input_frame
+* @param {Uint16Array} prev_frame
 */
-export function smooth(input_frame, num_buckets) {
+export function smooth(input_frame, prev_frame) {
     try {
-        wasm.smooth(addBorrowedObject(input_frame), addHeapObject(num_buckets));
+        wasm.smooth(addBorrowedObject(input_frame), addBorrowedObject(prev_frame));
     } finally {
+        heap[stack_pointer++] = undefined;
         heap[stack_pointer++] = undefined;
     }
 }
 
+/**
+* @param {Uint16Array} input_frame
+* @param {any} calibrated_temp_c
+* @returns {AnalysisResult}
+*/
+export function analyse(input_frame, calibrated_temp_c) {
+    try {
+        var ret = wasm.analyse(addBorrowedObject(input_frame), addBorrowedObject(calibrated_temp_c));
+        return AnalysisResult.__wrap(ret);
+    } finally {
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+function _assertClass(instance, klass) {
+    if (!(instance instanceof klass)) {
+        throw new Error(`expected instance of ${klass.name}`);
+    }
+    return instance.ptr;
+}
 /**
 * @returns {Float32Array}
 */
@@ -105,6 +127,14 @@ export function getMedianSmoothed() {
 */
 export function getThresholded() {
     var ret = wasm.getThresholded();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Uint8Array}
+*/
+export function getBodyShape() {
+    var ret = wasm.getBodyShape();
     return takeObject(ret);
 }
 
@@ -129,6 +159,14 @@ export function getHistogram() {
 */
 export function getRadialSmoothed() {
     var ret = wasm.getRadialSmoothed();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Float32Array}
+*/
+export function getEdges() {
+    var ret = wasm.getEdges();
     return takeObject(ret);
 }
 
@@ -188,6 +226,318 @@ function passStringToWasm0(arg, malloc, realloc) {
 }
 /**
 */
+export const HeadLockConfidence = Object.freeze({ Bad:0,"0":"Bad",Partial:1,"1":"Partial",Stable:2,"2":"Stable", });
+/**
+*/
+export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Leaving:8,"8":"Leaving",MissingThermalRef:9,"9":"MissingThermalRef", });
+/**
+*/
+export class AnalysisResult {
+
+    static __wrap(ptr) {
+        const obj = Object.create(AnalysisResult.prototype);
+        obj.ptr = ptr;
+
+        return obj;
+    }
+
+    free() {
+        const ptr = this.ptr;
+        this.ptr = 0;
+
+        wasm.__wbg_analysisresult_free(ptr);
+    }
+    /**
+    * @returns {number}
+    */
+    get motion_sum() {
+        var ret = wasm.__wbg_get_analysisresult_motion_sum(this.ptr);
+        return ret >>> 0;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set motion_sum(arg0) {
+        wasm.__wbg_set_analysisresult_motion_sum(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get motion_threshold_sum() {
+        var ret = wasm.__wbg_get_analysisresult_motion_threshold_sum(this.ptr);
+        return ret >>> 0;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set motion_threshold_sum(arg0) {
+        wasm.__wbg_set_analysisresult_motion_threshold_sum(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get threshold_sum() {
+        var ret = wasm.__wbg_get_analysisresult_threshold_sum(this.ptr);
+        return ret >>> 0;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set threshold_sum(arg0) {
+        wasm.__wbg_set_analysisresult_threshold_sum(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get frame_bottom_sum() {
+        var ret = wasm.__wbg_get_analysisresult_frame_bottom_sum(this.ptr);
+        return ret >>> 0;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set frame_bottom_sum(arg0) {
+        wasm.__wbg_set_analysisresult_frame_bottom_sum(this.ptr, arg0);
+    }
+    /**
+    * @returns {boolean}
+    */
+    get has_body() {
+        var ret = wasm.__wbg_get_analysisresult_has_body(this.ptr);
+        return ret !== 0;
+    }
+    /**
+    * @param {boolean} arg0
+    */
+    set has_body(arg0) {
+        wasm.__wbg_set_analysisresult_has_body(this.ptr, arg0);
+    }
+    /**
+    * @returns {HeatStats}
+    */
+    get heat_stats() {
+        var ret = wasm.__wbg_get_analysisresult_heat_stats(this.ptr);
+        return HeatStats.__wrap(ret);
+    }
+    /**
+    * @param {HeatStats} arg0
+    */
+    set heat_stats(arg0) {
+        _assertClass(arg0, HeatStats);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_analysisresult_heat_stats(this.ptr, ptr0);
+    }
+    /**
+    * @returns {FaceInfo}
+    */
+    get face() {
+        var ret = wasm.__wbg_get_analysisresult_face(this.ptr);
+        return FaceInfo.__wrap(ret);
+    }
+    /**
+    * @param {FaceInfo} arg0
+    */
+    set face(arg0) {
+        _assertClass(arg0, FaceInfo);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_analysisresult_face(this.ptr, ptr0);
+    }
+    /**
+    * @returns {number}
+    */
+    get next_state() {
+        var ret = wasm.__wbg_get_analysisresult_next_state(this.ptr);
+        return ret >>> 0;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set next_state(arg0) {
+        wasm.__wbg_set_analysisresult_next_state(this.ptr, arg0);
+    }
+    /**
+    * @returns {ThermalReference}
+    */
+    get thermal_ref() {
+        var ret = wasm.__wbg_get_analysisresult_thermal_ref(this.ptr);
+        return ThermalReference.__wrap(ret);
+    }
+    /**
+    * @param {ThermalReference} arg0
+    */
+    set thermal_ref(arg0) {
+        _assertClass(arg0, ThermalReference);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_analysisresult_thermal_ref(this.ptr, ptr0);
+    }
+}
+/**
+*/
+export class Circle {
+
+    static __wrap(ptr) {
+        const obj = Object.create(Circle.prototype);
+        obj.ptr = ptr;
+
+        return obj;
+    }
+
+    free() {
+        const ptr = this.ptr;
+        this.ptr = 0;
+
+        wasm.__wbg_circle_free(ptr);
+    }
+    /**
+    * @returns {Point}
+    */
+    get center() {
+        var ret = wasm.__wbg_get_circle_center(this.ptr);
+        return Point.__wrap(ret);
+    }
+    /**
+    * @param {Point} arg0
+    */
+    set center(arg0) {
+        _assertClass(arg0, Point);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_circle_center(this.ptr, ptr0);
+    }
+    /**
+    * @returns {number}
+    */
+    get radius() {
+        var ret = wasm.__wbg_get_circle_radius(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set radius(arg0) {
+        wasm.__wbg_set_circle_radius(this.ptr, arg0);
+    }
+}
+/**
+*/
+export class FaceInfo {
+
+    static __wrap(ptr) {
+        const obj = Object.create(FaceInfo.prototype);
+        obj.ptr = ptr;
+
+        return obj;
+    }
+
+    free() {
+        const ptr = this.ptr;
+        this.ptr = 0;
+
+        wasm.__wbg_faceinfo_free(ptr);
+    }
+    /**
+    * @returns {boolean}
+    */
+    get is_valid() {
+        var ret = wasm.__wbg_get_faceinfo_is_valid(this.ptr);
+        return ret !== 0;
+    }
+    /**
+    * @param {boolean} arg0
+    */
+    set is_valid(arg0) {
+        wasm.__wbg_set_faceinfo_is_valid(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get halfway_ratio() {
+        var ret = wasm.__wbg_get_faceinfo_halfway_ratio(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set halfway_ratio(arg0) {
+        wasm.__wbg_set_faceinfo_halfway_ratio(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get head_lock() {
+        var ret = wasm.__wbg_get_faceinfo_head_lock(this.ptr);
+        return ret >>> 0;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set head_lock(arg0) {
+        wasm.__wbg_set_faceinfo_head_lock(this.ptr, arg0);
+    }
+    /**
+    * @returns {Quad}
+    */
+    get head() {
+        var ret = wasm.__wbg_get_faceinfo_head(this.ptr);
+        return Quad.__wrap(ret);
+    }
+    /**
+    * @param {Quad} arg0
+    */
+    set head(arg0) {
+        _assertClass(arg0, Quad);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_faceinfo_head(this.ptr, ptr0);
+    }
+    /**
+    * @returns {Point}
+    */
+    get sample_point() {
+        var ret = wasm.__wbg_get_faceinfo_sample_point(this.ptr);
+        return Point.__wrap(ret);
+    }
+    /**
+    * @param {Point} arg0
+    */
+    set sample_point(arg0) {
+        _assertClass(arg0, Point);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_faceinfo_sample_point(this.ptr, ptr0);
+    }
+    /**
+    * @returns {number}
+    */
+    get sample_value() {
+        var ret = wasm.__wbg_get_faceinfo_sample_value(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set sample_value(arg0) {
+        wasm.__wbg_set_faceinfo_sample_value(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get sample_temp() {
+        var ret = wasm.__wbg_get_faceinfo_sample_temp(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set sample_temp(arg0) {
+        wasm.__wbg_set_faceinfo_sample_temp(this.ptr, arg0);
+    }
+}
+/**
+*/
 export class HeatStats {
 
     static __wrap(ptr) {
@@ -233,14 +583,200 @@ export class HeatStats {
     * @returns {number}
     */
     get threshold() {
-        var ret = wasm.__wbg_get_heatstats_threshold(this.ptr);
+        var ret = wasm.__wbg_get_faceinfo_halfway_ratio(this.ptr);
         return ret;
     }
     /**
     * @param {number} arg0
     */
     set threshold(arg0) {
-        wasm.__wbg_set_heatstats_threshold(this.ptr, arg0);
+        wasm.__wbg_set_faceinfo_halfway_ratio(this.ptr, arg0);
+    }
+}
+/**
+*/
+export class Point {
+
+    static __wrap(ptr) {
+        const obj = Object.create(Point.prototype);
+        obj.ptr = ptr;
+
+        return obj;
+    }
+
+    free() {
+        const ptr = this.ptr;
+        this.ptr = 0;
+
+        wasm.__wbg_point_free(ptr);
+    }
+    /**
+    * @returns {number}
+    */
+    get x() {
+        var ret = wasm.__wbg_get_point_x(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set x(arg0) {
+        wasm.__wbg_set_point_x(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get y() {
+        var ret = wasm.__wbg_get_point_y(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set y(arg0) {
+        wasm.__wbg_set_point_y(this.ptr, arg0);
+    }
+}
+/**
+*/
+export class Quad {
+
+    static __wrap(ptr) {
+        const obj = Object.create(Quad.prototype);
+        obj.ptr = ptr;
+
+        return obj;
+    }
+
+    free() {
+        const ptr = this.ptr;
+        this.ptr = 0;
+
+        wasm.__wbg_quad_free(ptr);
+    }
+    /**
+    * @returns {Point}
+    */
+    get top_left() {
+        var ret = wasm.__wbg_get_circle_center(this.ptr);
+        return Point.__wrap(ret);
+    }
+    /**
+    * @param {Point} arg0
+    */
+    set top_left(arg0) {
+        _assertClass(arg0, Point);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_circle_center(this.ptr, ptr0);
+    }
+    /**
+    * @returns {Point}
+    */
+    get top_right() {
+        var ret = wasm.__wbg_get_quad_top_right(this.ptr);
+        return Point.__wrap(ret);
+    }
+    /**
+    * @param {Point} arg0
+    */
+    set top_right(arg0) {
+        _assertClass(arg0, Point);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_quad_top_right(this.ptr, ptr0);
+    }
+    /**
+    * @returns {Point}
+    */
+    get bottom_left() {
+        var ret = wasm.__wbg_get_quad_bottom_left(this.ptr);
+        return Point.__wrap(ret);
+    }
+    /**
+    * @param {Point} arg0
+    */
+    set bottom_left(arg0) {
+        _assertClass(arg0, Point);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_quad_bottom_left(this.ptr, ptr0);
+    }
+    /**
+    * @returns {Point}
+    */
+    get bottom_right() {
+        var ret = wasm.__wbg_get_quad_bottom_right(this.ptr);
+        return Point.__wrap(ret);
+    }
+    /**
+    * @param {Point} arg0
+    */
+    set bottom_right(arg0) {
+        _assertClass(arg0, Point);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_quad_bottom_right(this.ptr, ptr0);
+    }
+}
+/**
+*/
+export class ThermalReference {
+
+    static __wrap(ptr) {
+        const obj = Object.create(ThermalReference.prototype);
+        obj.ptr = ptr;
+
+        return obj;
+    }
+
+    free() {
+        const ptr = this.ptr;
+        this.ptr = 0;
+
+        wasm.__wbg_thermalreference_free(ptr);
+    }
+    /**
+    * @returns {Circle}
+    */
+    get geom() {
+        var ret = wasm.__wbg_get_thermalreference_geom(this.ptr);
+        return Circle.__wrap(ret);
+    }
+    /**
+    * @param {Circle} arg0
+    */
+    set geom(arg0) {
+        _assertClass(arg0, Circle);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_thermalreference_geom(this.ptr, ptr0);
+    }
+    /**
+    * @returns {number}
+    */
+    get val() {
+        var ret = wasm.__wbg_get_thermalreference_val(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set val(arg0) {
+        wasm.__wbg_set_thermalreference_val(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get temp() {
+        var ret = wasm.__wbg_get_thermalreference_temp(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set temp(arg0) {
+        wasm.__wbg_set_thermalreference_temp(this.ptr, arg0);
     }
 }
 
@@ -343,20 +879,20 @@ async function init(input) {
         var ret = new Uint8Array(getObject(arg0), arg1 >>> 0, arg2 >>> 0);
         return addHeapObject(ret);
     };
-    imports.wbg.__wbg_newwithbyteoffsetandlength_66305c055ad2f047 = function(arg0, arg1, arg2) {
-        var ret = new Float32Array(getObject(arg0), arg1 >>> 0, arg2 >>> 0);
-        return addHeapObject(ret);
-    };
-    imports.wbg.__wbg_length_5ed9637f0c91cf31 = function(arg0) {
+    imports.wbg.__wbg_length_dee2c9630b806734 = function(arg0) {
         var ret = getObject(arg0).length;
         return ret;
     };
-    imports.wbg.__wbg_new_97dfb1e289e6c216 = function(arg0) {
-        var ret = new Float32Array(getObject(arg0));
+    imports.wbg.__wbg_new_7741b4c15e9a2dbe = function(arg0) {
+        var ret = new Uint16Array(getObject(arg0));
         return addHeapObject(ret);
     };
-    imports.wbg.__wbg_set_02fc6472d777f843 = function(arg0, arg1, arg2) {
+    imports.wbg.__wbg_set_5b74ad916846f628 = function(arg0, arg1, arg2) {
         getObject(arg0).set(getObject(arg1), arg2 >>> 0);
+    };
+    imports.wbg.__wbg_newwithbyteoffsetandlength_66305c055ad2f047 = function(arg0, arg1, arg2) {
+        var ret = new Float32Array(getObject(arg0), arg1 >>> 0, arg2 >>> 0);
+        return addHeapObject(ret);
     };
     imports.wbg.__wbindgen_number_get = function(arg0, arg1) {
         const obj = getObject(arg1);
