@@ -63,7 +63,8 @@ export const HEIGHT = 160;
     // ];
     const files: string[] = [
         //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
-        "/cptv-files/0.7.5beta recording-1 2708.cptv"
+        "/cptv-files/20200916.104504.155-warm-empty.cptv"
+        //"/cptv-files/0.7.5beta recording-1 2708.cptv"
     ];
     if (files.length) {
         const dropZone = document.getElementById("drop");
