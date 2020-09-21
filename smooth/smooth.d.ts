@@ -1,16 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
-* @param {any} width
-* @param {any} height
-*/
-export function initialize(width: any, height: any): void;
-/**
-* @param {Uint16Array} input_frame
-* @param {Uint16Array} prev_frame
-*/
-export function smooth(input_frame: Uint16Array, prev_frame: Uint16Array): void;
-/**
 * @param {Uint16Array} input_frame
 * @param {any} calibrated_temp_c
 * @returns {AnalysisResult}
@@ -29,6 +19,10 @@ export function getThresholded(): Uint8Array;
 */
 export function getBodyShape(): Uint8Array;
 /**
+* @returns {Uint8Array}
+*/
+export function getHull(): Uint8Array;
+/**
 * @returns {HeatStats}
 */
 export function getHeatStats(): HeatStats;
@@ -45,12 +39,10 @@ export function getRadialSmoothed(): Float32Array;
 */
 export function getEdges(): Float32Array;
 /**
+* @param {any} width
+* @param {any} height
 */
-export enum HeadLockConfidence {
-  Bad,
-  Partial,
-  Stable,
-}
+export function initialize(width: any, height: any): void;
 /**
 */
 export enum ScreeningState {
@@ -64,6 +56,13 @@ export enum ScreeningState {
   StableLock,
   Leaving,
   MissingThermalRef,
+}
+/**
+*/
+export enum HeadLockConfidence {
+  Bad,
+  Partial,
+  Stable,
 }
 /**
 */
@@ -225,14 +224,21 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
+  readonly analyse: (a: number, b: number) => number;
+  readonly getMedianSmoothed: () => number;
+  readonly getThresholded: () => number;
+  readonly getBodyShape: () => number;
+  readonly getHull: () => number;
+  readonly getHeatStats: () => number;
+  readonly getHistogram: () => number;
+  readonly getRadialSmoothed: () => number;
+  readonly getEdges: () => number;
+  readonly initialize: (a: number, b: number) => void;
   readonly __wbg_heatstats_free: (a: number) => void;
   readonly __wbg_get_heatstats_min: (a: number) => number;
   readonly __wbg_set_heatstats_min: (a: number, b: number) => void;
   readonly __wbg_get_heatstats_max: (a: number) => number;
   readonly __wbg_set_heatstats_max: (a: number, b: number) => void;
-  readonly initialize: (a: number, b: number) => void;
-  readonly smooth: (a: number, b: number) => void;
-  readonly analyse: (a: number, b: number) => number;
   readonly __wbg_quad_free: (a: number) => void;
   readonly __wbg_get_quad_top_right: (a: number) => number;
   readonly __wbg_set_quad_top_right: (a: number, b: number) => void;
@@ -285,13 +291,6 @@ export interface InitOutput {
   readonly __wbg_set_analysisresult_next_state: (a: number, b: number) => void;
   readonly __wbg_get_analysisresult_thermal_ref: (a: number) => number;
   readonly __wbg_set_analysisresult_thermal_ref: (a: number, b: number) => void;
-  readonly getMedianSmoothed: () => number;
-  readonly getThresholded: () => number;
-  readonly getBodyShape: () => number;
-  readonly getHeatStats: () => number;
-  readonly getHistogram: () => number;
-  readonly getRadialSmoothed: () => number;
-  readonly getEdges: () => number;
   readonly __wbg_circle_free: (a: number) => void;
   readonly __wbg_get_circle_center: (a: number) => number;
   readonly __wbg_set_circle_center: (a: number, b: number) => void;

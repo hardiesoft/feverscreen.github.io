@@ -19,12 +19,18 @@
         .c-container {
             position: relative;
             width: 120px;
-            height: 300px;
+            height: 220px;
             float: left;
             outline: 1px solid aliceblue;
         }
         .c-container:first-of-type {
             display: none;
+        }
+
+        .temp {
+            display: inline-block;
+            padding: 5px 0;
+            font-size: 200%;
         }
 
         .c-container > p {
@@ -79,7 +85,7 @@
             pointer-events: none;
             font-size: 10px;
             position: absolute;
-            top: 190px;
+            top: 165px;
             padding: 0 2px;
         }
         .on {
@@ -113,7 +119,7 @@
     <button id="toggle-bg" class="active">background</button>
     <button id="toggle-motion" class="active">motion</button>
     <button id="toggle-threshold" class="active">threshold</button>
-    <button id="toggle-edges" class="active">edges</button>
+    <button id="toggle-edges-2" class="active">motion + threshold</button>
     <button id="toggle-analysis" class="active">analysis</button>
 </nav>
 <div id="drop">

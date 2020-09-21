@@ -65,13 +65,6 @@ function getInt32Memory0() {
     }
     return cachegetInt32Memory0;
 }
-/**
-* @param {any} width
-* @param {any} height
-*/
-export function initialize(width, height) {
-    wasm.initialize(addHeapObject(width), addHeapObject(height));
-}
 
 let stack_pointer = 32;
 
@@ -80,19 +73,6 @@ function addBorrowedObject(obj) {
     heap[--stack_pointer] = obj;
     return stack_pointer;
 }
-/**
-* @param {Uint16Array} input_frame
-* @param {Uint16Array} prev_frame
-*/
-export function smooth(input_frame, prev_frame) {
-    try {
-        wasm.smooth(addBorrowedObject(input_frame), addBorrowedObject(prev_frame));
-    } finally {
-        heap[stack_pointer++] = undefined;
-        heap[stack_pointer++] = undefined;
-    }
-}
-
 /**
 * @param {Uint16Array} input_frame
 * @param {any} calibrated_temp_c
@@ -108,12 +88,6 @@ export function analyse(input_frame, calibrated_temp_c) {
     }
 }
 
-function _assertClass(instance, klass) {
-    if (!(instance instanceof klass)) {
-        throw new Error(`expected instance of ${klass.name}`);
-    }
-    return instance.ptr;
-}
 /**
 * @returns {Float32Array}
 */
@@ -135,6 +109,14 @@ export function getThresholded() {
 */
 export function getBodyShape() {
     var ret = wasm.getBodyShape();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Uint8Array}
+*/
+export function getHull() {
+    var ret = wasm.getHull();
     return takeObject(ret);
 }
 
@@ -168,6 +150,21 @@ export function getRadialSmoothed() {
 export function getEdges() {
     var ret = wasm.getEdges();
     return takeObject(ret);
+}
+
+/**
+* @param {any} width
+* @param {any} height
+*/
+export function initialize(width, height) {
+    wasm.initialize(addHeapObject(width), addHeapObject(height));
+}
+
+function _assertClass(instance, klass) {
+    if (!(instance instanceof klass)) {
+        throw new Error(`expected instance of ${klass.name}`);
+    }
+    return instance.ptr;
 }
 
 let WASM_VECTOR_LEN = 0;
@@ -226,10 +223,10 @@ function passStringToWasm0(arg, malloc, realloc) {
 }
 /**
 */
-export const HeadLockConfidence = Object.freeze({ Bad:0,"0":"Bad",Partial:1,"1":"Partial",Stable:2,"2":"Stable", });
+export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Leaving:8,"8":"Leaving",MissingThermalRef:9,"9":"MissingThermalRef", });
 /**
 */
-export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Leaving:8,"8":"Leaving",MissingThermalRef:9,"9":"MissingThermalRef", });
+export const HeadLockConfidence = Object.freeze({ Bad:0,"0":"Bad",Partial:1,"1":"Partial",Stable:2,"2":"Stable", });
 /**
 */
 export class AnalysisResult {
