@@ -75,6 +75,7 @@ export const HEIGHT = 160;
     //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
     //"/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv"
     //"/cptv-files/0.7.5beta recording-1 2708.cptv"
+    //"/cptv-files/20200921.155036.812.cptv"
     ];
     if (files.length) {
         const dropZone = document.getElementById("drop");
