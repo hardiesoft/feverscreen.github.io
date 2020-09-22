@@ -23,11 +23,10 @@ export enum ScreeningState {
     HEAD_LOCK = "HEAD_LOCK",
     TOO_FAR = "TOO_FAR",
     LARGE_BODY = "LARGE_BODY",
-    MULTIPLE_HEADS = "MULTIPLE_HEADS",
     FACE_LOCK = "FACE_LOCK", // has face
     FRONTAL_LOCK = "FRONTAL_LOCK", // Face is front-on
     STABLE_LOCK = "STABLE_LOCK", // Face has not changed in size or position for a couple of frames.
-    LEAVING = "LEAVING", // has face, but not front-on
+    MEASURED = "MEASURED", // Temperature snapshot taken, waiting for the person to leave the frame.
     MISSING_THERMAL_REF = "MISSING_REF"
 }
 
@@ -91,7 +90,7 @@ function getScreeningState(state: number): ScreeningState {
             screeningState = ScreeningState.STABLE_LOCK;
             break;
         case 8:
-            screeningState = ScreeningState.LEAVING;
+            screeningState = ScreeningState.MEASURED;
             break;
         case 9:
             screeningState = ScreeningState.MISSING_THERMAL_REF;

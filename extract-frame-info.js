@@ -6,11 +6,10 @@ export var ScreeningState;
     ScreeningState["HEAD_LOCK"] = "HEAD_LOCK";
     ScreeningState["TOO_FAR"] = "TOO_FAR";
     ScreeningState["LARGE_BODY"] = "LARGE_BODY";
-    ScreeningState["MULTIPLE_HEADS"] = "MULTIPLE_HEADS";
     ScreeningState["FACE_LOCK"] = "FACE_LOCK";
     ScreeningState["FRONTAL_LOCK"] = "FRONTAL_LOCK";
     ScreeningState["STABLE_LOCK"] = "STABLE_LOCK";
-    ScreeningState["LEAVING"] = "LEAVING";
+    ScreeningState["MEASURED"] = "MEASURED";
     ScreeningState["MISSING_THERMAL_REF"] = "MISSING_REF";
 })(ScreeningState || (ScreeningState = {}));
 function getScreeningState(state) {
@@ -41,7 +40,7 @@ function getScreeningState(state) {
             screeningState = ScreeningState.STABLE_LOCK;
             break;
         case 8:
-            screeningState = ScreeningState.LEAVING;
+            screeningState = ScreeningState.MEASURED;
             break;
         case 9:
             screeningState = ScreeningState.MISSING_THERMAL_REF;

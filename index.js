@@ -334,7 +334,6 @@ async function renderFile(buffer, frameBuffer) {
             ctx.arc(thermalReference.geom.center.x, thermalReference.geom.center.y, thermalReference.geom.radius, 0, Math.PI * 2);
             ctx.fill();
         }
-        // If there's not enough weight above the threshold, move down until there is.
         drawBackgroundImage(backgroundCanvas, prevFrame, frameStats.heatStats.min, frameStats.heatStats.max);
         let output = "";
         if (ii !== frameNumber) {
@@ -347,10 +346,6 @@ async function renderFile(buffer, frameBuffer) {
             output += `<br>Sample temp this frame: <span class="temp">${frameStats.face.sampleTemp.toFixed(2)}&deg;C</span>`;
         }
         textState.innerHTML = output;
-        //         textState.innerHTML = `#${frameNumber}, ${screeningState}(${screeningStateCount})
-        // Threshold ${(thermalRefC + (adjustedThreshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;
-        // <br>Motion: ${frameInfo.motion}<br>Threshold: ${frameInfo.thresholded}<br>Both: ${frameInfo.motionPlusThreshold}<br>Bottom: ${frameInfo.actionInBottomHalf}`;
-        // Write the screening state out to a text block.
         ii++;
     }
     timings.sort((a, b) => {

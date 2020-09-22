@@ -75,12 +75,12 @@ function addBorrowedObject(obj) {
 }
 /**
 * @param {Uint16Array} input_frame
-* @param {any} calibrated_temp_c
+* @param {any} calibrated_thermal_ref_temp_c
 * @returns {AnalysisResult}
 */
-export function analyse(input_frame, calibrated_temp_c) {
+export function analyse(input_frame, calibrated_thermal_ref_temp_c) {
     try {
-        var ret = wasm.analyse(addBorrowedObject(input_frame), addBorrowedObject(calibrated_temp_c));
+        var ret = wasm.analyse(addBorrowedObject(input_frame), addBorrowedObject(calibrated_thermal_ref_temp_c));
         return AnalysisResult.__wrap(ret);
     } finally {
         heap[stack_pointer++] = undefined;
@@ -223,7 +223,7 @@ function passStringToWasm0(arg, malloc, realloc) {
 }
 /**
 */
-export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Leaving:8,"8":"Leaving",MissingThermalRef:9,"9":"MissingThermalRef", });
+export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Measured:8,"8":"Measured",MissingThermalRef:9,"9":"MissingThermalRef", });
 /**
 */
 export const HeadLockConfidence = Object.freeze({ Bad:0,"0":"Bad",Partial:1,"1":"Partial",Stable:2,"2":"Stable", });
