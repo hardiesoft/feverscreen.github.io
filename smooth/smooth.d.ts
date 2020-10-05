@@ -19,18 +19,6 @@ export function getThresholded(): Uint8Array;
 */
 export function getBodyShape(): Uint8Array;
 /**
-* @returns {Uint8Array}
-*/
-export function getHull(): Uint8Array;
-/**
-* @returns {HeatStats}
-*/
-export function getHeatStats(): HeatStats;
-/**
-* @returns {Array<any>}
-*/
-export function getHistogram(): Array<any>;
-/**
 * @returns {Float32Array}
 */
 export function getRadialSmoothed(): Float32Array;
@@ -228,9 +216,6 @@ export interface InitOutput {
   readonly getMedianSmoothed: () => number;
   readonly getThresholded: () => number;
   readonly getBodyShape: () => number;
-  readonly getHull: () => number;
-  readonly getHeatStats: () => number;
-  readonly getHistogram: () => number;
   readonly getRadialSmoothed: () => number;
   readonly getEdges: () => number;
   readonly initialize: (a: number, b: number) => void;
@@ -239,6 +224,8 @@ export interface InitOutput {
   readonly __wbg_set_heatstats_min: (a: number, b: number) => void;
   readonly __wbg_get_heatstats_max: (a: number) => number;
   readonly __wbg_set_heatstats_max: (a: number, b: number) => void;
+  readonly __wbg_get_heatstats_threshold: (a: number) => number;
+  readonly __wbg_set_heatstats_threshold: (a: number, b: number) => void;
   readonly __wbg_quad_free: (a: number) => void;
   readonly __wbg_get_quad_top_right: (a: number) => number;
   readonly __wbg_set_quad_top_right: (a: number, b: number) => void;
@@ -297,10 +284,9 @@ export interface InitOutput {
   readonly __wbg_get_circle_radius: (a: number) => number;
   readonly __wbg_set_circle_radius: (a: number, b: number) => void;
   readonly __wbg_point_free: (a: number) => void;
-  readonly __wbg_get_heatstats_threshold: (a: number) => number;
   readonly __wbg_get_quad_top_left: (a: number) => number;
   readonly __wbg_set_quad_top_left: (a: number, b: number) => void;
-  readonly __wbg_set_heatstats_threshold: (a: number, b: number) => void;
+  readonly __wbindgen_exn_store: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number) => void;
   readonly __wbindgen_malloc: (a: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number) => number;
