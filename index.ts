@@ -1,8 +1,8 @@
 import * as cptvPlayer from './cptv-player/cptv_player.js';
-import * as analysis from "./smooth/smooth.js";
+import * as analysis from "./processing/tko_processing.js";
 import * as curveFit from "./curve-fit/curve_fitting.js";
 import {drawBackgroundImage} from "./debug-drawing.js";
-import {extractFrameInfo} from "./extract-frame-info.js";
+import {extractFrameInfo, ScreeningState} from "./extract-frame-info.js";
 
 //const minFrame: number = 60;//423;//62;
 //const maxFrame: number = 73;//73;
@@ -82,7 +82,10 @@ export const HEIGHT = 160;
         //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
         //"/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv"
         //"/cptv-files/0.7.5beta recording-1 2708.cptv"
+        "/cptv-files/Missed_Saffy.cptv"
         //"/cptv-files/20200921.155036.812.cptv"
+        //"/cptv-files/20201006.103814.162-obscured-ref.cptv"
+        //"/cptv-files/2_people_20200929.151113.294.cptv"
     ];
     if (files.length) {
         const dropZone = document.getElementById("drop");
@@ -153,6 +156,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
     let prevFrame = new Float32Array(120 * 160);
     const timings = [];
     const refImages: Record<number, Float32Array> = {};
+    let prevFrameStats = null;
     while (!seenFrames.has(frameNumber)) {
         seenFrames.add(frameNumber);
         const frameInfo = cptvPlayer.getRawFrame(new Uint8Array(frameBuffer));
@@ -164,6 +168,25 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             break;
         }
 
+        performance.mark(`start frame ${frameNumber}`);
+        const s = performance.now();
+        let frame = new Uint16Array(frameBuffer);
+        // Now do smoothing...
+        let frameStats = extractFrameInfo(analysis.analyse(frame, 38.5));
+        performance.mark(`end frame ${frameNumber}`);
+        performance.measure(`frame ${frameNumber}`, `start frame ${frameNumber}`, `end frame ${frameNumber}`);
+        const e = performance.now();
+        timings.push(e - s);
+        if (!prevFrameStats) {
+            prevFrameStats = frameStats;
+        }
+        const skipMissingThermalRefFrames = frameStats.nextState == ScreeningState.MISSING_THERMAL_REF && prevFrameStats.nextState === ScreeningState.MISSING_THERMAL_REF;
+        const skipReadyFrames = frameStats.nextState === ScreeningState.READY && prevFrameStats.nextState === ScreeningState.READY;
+        if (skipMissingThermalRefFrames || skipReadyFrames) {
+            continue;
+        }
+        // TODO(jon): Skip all but the first thermal ref, then add a count of how many skipped.
+        //  Do the same for READY
         const div = document.createElement("div");
         div.className = "c-container";
         const text = document.createElement("p");
@@ -207,17 +230,6 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         div.appendChild(textState);
         document.body.appendChild(div);
 
-        performance.mark(`start frame ${frameNumber}`);
-        const s = performance.now();
-        let frame = new Uint16Array(frameBuffer);
-        // Now do smoothing...
-        let frameStats = extractFrameInfo(analysis.analyse(frame, 38.5));
-        // console.log(frameNumber, frameStats.heatStats.threshold);
-        performance.mark(`end frame ${frameNumber}`);
-        performance.measure(`frame ${frameNumber}`, `start frame ${frameNumber}`, `end frame ${frameNumber}`);
-        const e = performance.now();
-        timings.push(e - s);
-
         const maskData = analysis.getThresholded();
         {
             const ctx = thresholdCanvas.getContext('2d') as CanvasRenderingContext2D;
@@ -225,7 +237,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             const imageData = new Uint32Array(img.data.buffer);
             const v = 255;
             for (let i = 0; i < maskData.length; i++) {
-                if (maskData[i] & 1 << 6) {
+                if (maskData[i] & 1 << 5) {
                     imageData[i] = 0x66 << 24 | v << 16 | 0 << 8 | 0;
                 }
             }
@@ -237,7 +249,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             const imageData = new Uint32Array(img.data.buffer);
             for (let i = 0; i < maskData.length; i++) {
                 if (maskData[i] & 1 << 7) {
-                    imageData[i] = 0x33ffffff;
+                    imageData[i] = 0x33ff00ff;
                 }
             }
             ctx.putImageData(img, 0, 0);
@@ -249,7 +261,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             const imageData = new Uint32Array(img.data.buffer);
             for (let i = 0; i < maskData.length; i++) {
                 if (maskData[i] & 1 << 4) {
-                    imageData[i] = 0xff00ff00;
+                    imageData[i] = 0x2200ff00;
                 }
             }
             ctx.putImageData(img, 0, 0);
@@ -280,8 +292,10 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         let body = analysis.getBodyShape();
         const ctx = analysisCanvas.getContext('2d') as CanvasRenderingContext2D;
         ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+
+
         let bodyShape = [];
-        for (let i = 0; i < body.length; i+=3) {
+        for (let i = 0; i < body.length; i += 3) {
             let y = body[i];
             let x0 = body[i + 1];
             let x1 = body[i + 2];
@@ -290,6 +304,18 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         }
 
 
+
+        let face = analysis.getFaceShape();
+        //let faceShape = [];
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        for (let i = 0; i < face.length; i += 3) {
+            let y = face[i];
+            let x0 = face[i + 1];
+            let x1 = face[i + 2];
+            //bodyShape.push({x0, x1, y});
+            ctx.fillRect(x0, y, x1 - x0, 1);
+        }
+
         const neckLeft = frameStats.face.head.bottomLeft;
         const neckRight = frameStats.face.head.bottomRight;
         const neckTopLeft = frameStats.face.head.topLeft;
@@ -297,7 +323,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         const samplePoint = frameStats.face.samplePoint;
 
         ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 1)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
         ctx.beginPath();
         ctx.moveTo(neckLeft.x, neckLeft.y);
         ctx.lineTo(neckTopLeft.x, neckTopLeft.y);
@@ -306,7 +332,14 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         ctx.lineTo(neckLeft.x, neckLeft.y);
         ctx.stroke();
 
+        // Take the first 5-10 px of the body shape, get the bounds.
+        if (bodyShape.length >= 6) {
+            ctx.strokeStyle = 'rgba(0, 250, 0, 0.9)';
+            ctx.strokeRect(bodyShape[3].x0, bodyShape[0].y, bodyShape[3].x1 - bodyShape[3].x0, 4);
+        }
+
         if (samplePoint.x !== 0) {
+            ctx.strokeStyle = 'white';
             ctx.beginPath();
             ctx.arc(samplePoint.x, samplePoint.y, 3, 0, Math.PI * 2);
             ctx.stroke();
@@ -318,45 +351,43 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
         ctx.arc(neckRight.x, neckRight.y, 1.5, 0, Math.PI * 2);
         ctx.fill();
 
-
-
-
-        const pointsArray = new Uint8Array(bodyShape.length * 4);
-        if (bodyShape.length) {
-            let i = 0;
-            bodyShape.reverse();
-            for (const row of bodyShape) {
-                pointsArray[i++] = row.x1;
-                pointsArray[i++] = row.y;
-            }
-            bodyShape.reverse();
-            for (const row of bodyShape) {
-                pointsArray[i++] = row.x0;
-                pointsArray[i++] = row.y;
-            }
-        }
-
-
-        if (pointsArray.length) {
-            const bezierPts = curveFit.fitCurveThroughPoints(pointsArray, 1.5);
-            ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-            ctx.lineWidth = 2;
-            ctx.lineCap = "round";
-            ctx.beginPath();
-            ctx.moveTo(bezierPts[0], bezierPts[1]);
-            for (let i = 2; i < bezierPts.length; i += 6) {
-                ctx.bezierCurveTo(
-                    bezierPts[i],
-                    bezierPts[i + 1],
-                    bezierPts[i + 2],
-                    bezierPts[i + 3],
-                    bezierPts[i + 4],
-                    bezierPts[i + 5]
-                );
-            }
-            ctx.stroke();
-        }
+        //
+        // const pointsArray = new Uint8Array(bodyShape.length * 4);
+        // if (bodyShape.length) {
+        //     let i = 0;
+        //     bodyShape.reverse();
+        //     for (const row of bodyShape) {
+        //         pointsArray[i++] = row.x1;
+        //         pointsArray[i++] = row.y;
+        //     }
+        //     bodyShape.reverse();
+        //     for (const row of bodyShape) {
+        //         pointsArray[i++] = row.x0;
+        //         pointsArray[i++] = row.y;
+        //     }
+        // }
+        //
+        //
+        // if (pointsArray.length) {
+        //     const bezierPts = curveFit.fitCurveThroughPoints(pointsArray, 1.5);
+        //     ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
+        //     ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+        //     ctx.lineWidth = 2;
+        //     ctx.lineCap = "round";
+        //     ctx.beginPath();
+        //     ctx.moveTo(bezierPts[0], bezierPts[1]);
+        //     for (let i = 2; i < bezierPts.length; i += 6) {
+        //         ctx.bezierCurveTo(
+        //             bezierPts[i],
+        //             bezierPts[i + 1],
+        //             bezierPts[i + 2],
+        //             bezierPts[i + 3],
+        //             bezierPts[i + 4],
+        //             bezierPts[i + 5]
+        //         );
+        //     }
+        //     ctx.stroke();
+        // }
 
 
         /*
@@ -378,7 +409,7 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             const ctx = analysisCanvas.getContext('2d') as CanvasRenderingContext2D;
             ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
             ctx.beginPath();
-            ctx.arc(thermalReference.geom.center.x, thermalReference.geom.center.y, thermalReference.geom.radius, 0, Math.PI * 2);
+            ctx.arc(thermalReference.geom.center.x + 0.5, thermalReference.geom.center.y + 0.5, thermalReference.geom.radius, 0, Math.PI * 2);
             ctx.fill();
         }
         drawBackgroundImage(backgroundCanvas, prevFrame, frameStats.heatStats.min, frameStats.heatStats.max);
@@ -389,9 +420,16 @@ async function renderFile(buffer: ArrayBuffer, frameBuffer: ArrayBuffer) {
             output = `#${frameNumber}`;
         }
         if (samplePoint.x !== 0) {
-            output += `<br>Sample temp this frame: <span class="temp">${frameStats.face.sampleTemp.toFixed(2)}&deg;C</span>`;
+            output += `<span class="temp">${frameStats.face.sampleTemp.toFixed(2)}&deg;C</span>`;
         }
+        output += `<br>Threshold: ${frameStats.heatStats.threshold} / ${(thermalRefC + (frameStats.heatStats.threshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;<br>Motion: ${frameStats.motionSum}`;
         textState.innerHTML = output;
+
+        // TODO(jon): Output face threshold and inner canthus thresholds
+
+        prevFrameStats = frameStats;
+        // console.log(frameNumber, frameStats.heatStats.threshold);
+
         ii++;
     }
     timings.sort((a, b) => {

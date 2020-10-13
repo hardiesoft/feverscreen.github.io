@@ -1,4 +1,4 @@
-import {AnalysisResult as WasmAnalysisResult} from "./smooth/smooth";
+import {AnalysisResult as WasmAnalysisResult} from "./processing/smooth";
 
 export interface Point {
     x: number;

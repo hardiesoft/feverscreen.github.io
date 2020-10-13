@@ -66,92 +66,69 @@ function getInt32Memory0() {
     return cachegetInt32Memory0;
 }
 
-let stack_pointer = 32;
-
-function addBorrowedObject(obj) {
-    if (stack_pointer == 1) throw new Error('out of js stack');
-    heap[--stack_pointer] = obj;
-    return stack_pointer;
-}
-/**
-* @param {Uint16Array} input_frame
-* @param {any} calibrated_thermal_ref_temp_c
-* @returns {AnalysisResult}
-*/
-export function analyse(input_frame, calibrated_thermal_ref_temp_c) {
-    try {
-        var ret = wasm.analyse(addBorrowedObject(input_frame), addBorrowedObject(calibrated_thermal_ref_temp_c));
-        return AnalysisResult.__wrap(ret);
-    } finally {
-        heap[stack_pointer++] = undefined;
-        heap[stack_pointer++] = undefined;
+function debugString(val) {
+    // primitive types
+    const type = typeof val;
+    if (type == 'number' || type == 'boolean' || val == null) {
+        return  `${val}`;
     }
-}
-
-/**
-* @returns {Float32Array}
-*/
-export function getMedianSmoothed() {
-    var ret = wasm.getMedianSmoothed();
-    return takeObject(ret);
-}
-
-/**
-* @returns {Uint8Array}
-*/
-export function getThresholded() {
-    var ret = wasm.getThresholded();
-    return takeObject(ret);
-}
-
-/**
-* @returns {Uint8Array}
-*/
-export function getBodyShape() {
-    var ret = wasm.getBodyShape();
-    return takeObject(ret);
-}
-
-/**
-* @returns {Float32Array}
-*/
-export function getRadialSmoothed() {
-    var ret = wasm.getRadialSmoothed();
-    return takeObject(ret);
-}
-
-/**
-* @returns {Float32Array}
-*/
-export function getEdges() {
-    var ret = wasm.getEdges();
-    return takeObject(ret);
-}
-
-/**
-* @param {any} width
-* @param {any} height
-*/
-export function initialize(width, height) {
-    wasm.initialize(addHeapObject(width), addHeapObject(height));
-}
-
-function _assertClass(instance, klass) {
-    if (!(instance instanceof klass)) {
-        throw new Error(`expected instance of ${klass.name}`);
+    if (type == 'string') {
+        return `"${val}"`;
     }
-    return instance.ptr;
-}
-
-function handleError(f) {
-    return function () {
-        try {
-            return f.apply(this, arguments);
-
-        } catch (e) {
-            wasm.__wbindgen_exn_store(addHeapObject(e));
+    if (type == 'symbol') {
+        const description = val.description;
+        if (description == null) {
+            return 'Symbol';
+        } else {
+            return `Symbol(${description})`;
         }
-    };
+    }
+    if (type == 'function') {
+        const name = val.name;
+        if (typeof name == 'string' && name.length > 0) {
+            return `Function(${name})`;
+        } else {
+            return 'Function';
+        }
+    }
+    // objects
+    if (Array.isArray(val)) {
+        const length = val.length;
+        let debug = '[';
+        if (length > 0) {
+            debug += debugString(val[0]);
+        }
+        for(let i = 1; i < length; i++) {
+            debug += ', ' + debugString(val[i]);
+        }
+        debug += ']';
+        return debug;
+    }
+    // Test for built-in
+    const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+    let className;
+    if (builtInMatches.length > 1) {
+        className = builtInMatches[1];
+    } else {
+        // Failed to match the standard '[object ClassName]'
+        return toString.call(val);
+    }
+    if (className == 'Object') {
+        // we're a user defined class or Object
+        // JSON.stringify avoids problems with cycles, and is generally much
+        // easier than looping through ownProperties of `val`.
+        try {
+            return 'Object(' + JSON.stringify(val) + ')';
+        } catch (_) {
+            return 'Object';
+        }
+    }
+    // errors
+    if (val instanceof Error) {
+        return `${val.name}: ${val.message}\n${val.stack}`;
+    }
+    // TODO we could test for more things here, like `Set`s and `Map`s.
+    return className;
 }
 
 let WASM_VECTOR_LEN = 0;
@@ -208,12 +185,111 @@ function passStringToWasm0(arg, malloc, realloc) {
     WASM_VECTOR_LEN = offset;
     return ptr;
 }
+
+let stack_pointer = 32;
+
+function addBorrowedObject(obj) {
+    if (stack_pointer == 1) throw new Error('out of js stack');
+    heap[--stack_pointer] = obj;
+    return stack_pointer;
+}
+/**
+* @param {Uint16Array} input_frame
+* @param {any} calibrated_thermal_ref_temp_c
+* @returns {AnalysisResult}
+*/
+export function analyse(input_frame, calibrated_thermal_ref_temp_c) {
+    try {
+        var ret = wasm.analyse(addBorrowedObject(input_frame), addBorrowedObject(calibrated_thermal_ref_temp_c));
+        return AnalysisResult.__wrap(ret);
+    } finally {
+        heap[stack_pointer++] = undefined;
+        heap[stack_pointer++] = undefined;
+    }
+}
+
+/**
+* @returns {Float32Array}
+*/
+export function getMedianSmoothed() {
+    var ret = wasm.getMedianSmoothed();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Uint8Array}
+*/
+export function getThresholded() {
+    var ret = wasm.getThresholded();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Uint8Array}
+*/
+export function getBodyShape() {
+    var ret = wasm.getBodyShape();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Uint8Array}
+*/
+export function getFaceShape() {
+    var ret = wasm.getFaceShape();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Float32Array}
+*/
+export function getRadialSmoothed() {
+    var ret = wasm.getRadialSmoothed();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Float32Array}
+*/
+export function getEdges() {
+    var ret = wasm.getEdges();
+    return takeObject(ret);
+}
+
+/**
+* @param {any} _width
+* @param {any} _height
+*/
+export function initialize(_width, _height) {
+    wasm.initialize(addHeapObject(_width), addHeapObject(_height));
+}
+
+function _assertClass(instance, klass) {
+    if (!(instance instanceof klass)) {
+        throw new Error(`expected instance of ${klass.name}`);
+    }
+    return instance.ptr;
+}
+
+function handleError(f) {
+    return function () {
+        try {
+            return f.apply(this, arguments);
+
+        } catch (e) {
+            wasm.__wbindgen_exn_store(addHeapObject(e));
+        }
+    };
+}
 /**
 */
 export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Measured:8,"8":"Measured",MissingThermalRef:9,"9":"MissingThermalRef", });
 /**
 */
 export const HeadLockConfidence = Object.freeze({ Bad:0,"0":"Bad",Partial:1,"1":"Partial",Stable:2,"2":"Stable", });
+/**
+*/
+export const InvalidReason = Object.freeze({ Unknown:0,"0":"Unknown",Valid:1,"1":"Valid",TooMuchTilt:2,"2":"TooMuchTilt", });
 /**
 */
 export class AnalysisResult {
@@ -518,6 +594,19 @@ export class FaceInfo {
     */
     set sample_temp(arg0) {
         wasm.__wbg_set_faceinfo_sample_temp(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get reason() {
+        var ret = wasm.__wbg_get_faceinfo_reason(this.ptr);
+        return ret >>> 0;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set reason(arg0) {
+        wasm.__wbg_set_faceinfo_reason(this.ptr, arg0);
     }
 }
 /**
@@ -917,6 +1006,13 @@ async function init(input) {
         var ret = typeof(obj) === 'number' ? obj : undefined;
         getFloat64Memory0()[arg0 / 8 + 1] = isLikeNone(ret) ? 0 : ret;
         getInt32Memory0()[arg0 / 4 + 0] = !isLikeNone(ret);
+    };
+    imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {
+        var ret = debugString(getObject(arg1));
+        var ptr0 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        getInt32Memory0()[arg0 / 4 + 1] = len0;
+        getInt32Memory0()[arg0 / 4 + 0] = ptr0;
     };
     imports.wbg.__wbindgen_throw = function(arg0, arg1) {
         throw new Error(getStringFromWasm0(arg0, arg1));
