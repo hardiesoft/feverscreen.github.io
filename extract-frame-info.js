@@ -11,6 +11,8 @@ export var ScreeningState;
     ScreeningState["STABLE_LOCK"] = "STABLE_LOCK";
     ScreeningState["MEASURED"] = "MEASURED";
     ScreeningState["MISSING_THERMAL_REF"] = "MISSING_REF";
+    ScreeningState["BLURRED"] = "BLURRED";
+    ScreeningState["AFTER_FFC_EVENT"] = "AFTER_FFC_EVENT";
 })(ScreeningState || (ScreeningState = {}));
 function getScreeningState(state) {
     let screeningState = ScreeningState.INIT;
@@ -45,6 +47,12 @@ function getScreeningState(state) {
         case 9:
             screeningState = ScreeningState.MISSING_THERMAL_REF;
             break;
+        case 10:
+            screeningState = ScreeningState.BLURRED;
+            break;
+        case 11:
+            screeningState = ScreeningState.AFTER_FFC_EVENT;
+            break;
     }
     return screeningState;
 }
@@ -56,6 +64,7 @@ export function extractFrameInfo(analysisResult) {
     const bL = h.bottom_left;
     const bR = h.bottom_right;
     const sP = f.sample_point;
+    const iSP = f.ideal_sample_point;
     const hS = analysisResult.heat_stats;
     const ref = analysisResult.thermal_ref;
     const geom = ref.geom;
@@ -87,6 +96,12 @@ export function extractFrameInfo(analysisResult) {
             },
             sampleTemp: f.sample_temp,
             sampleValue: f.sample_value,
+            idealSamplePoint: {
+                x: iSP.x,
+                y: iSP.y
+            },
+            idealSampleTemp: f.ideal_sample_temp,
+            idealSampleValue: f.ideal_sample_value,
             halfwayRatio: f.halfway_ratio,
             isValid: f.is_valid
         },
@@ -120,6 +135,7 @@ export function extractFrameInfo(analysisResult) {
     bL.free();
     bR.free();
     sP.free();
+    iSP.free();
     hS.free();
     cP.free();
     geom.free();

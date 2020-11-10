@@ -3,13 +3,18 @@
 /**
 * @param {Uint16Array} input_frame
 * @param {any} calibrated_thermal_ref_temp_c
+* @param {any} ms_since_last_ffc
 * @returns {AnalysisResult}
 */
-export function analyse(input_frame: Uint16Array, calibrated_thermal_ref_temp_c: any): AnalysisResult;
+export function analyse(input_frame: Uint16Array, calibrated_thermal_ref_temp_c: any, ms_since_last_ffc: any): AnalysisResult;
 /**
 * @returns {Float32Array}
 */
 export function getMedianSmoothed(): Float32Array;
+/**
+* @returns {Float32Array}
+*/
+export function getDebug(): Float32Array;
 /**
 * @returns {Uint8Array}
 */
@@ -48,6 +53,8 @@ export enum ScreeningState {
   StableLock,
   Measured,
   MissingThermalRef,
+  Blurred,
+  AfterFfcEvent,
 }
 /**
 */
@@ -133,6 +140,18 @@ export class FaceInfo {
 * @returns {number}
 */
   head_lock: number;
+/**
+* @returns {Point}
+*/
+  ideal_sample_point: Point;
+/**
+* @returns {number}
+*/
+  ideal_sample_temp: number;
+/**
+* @returns {number}
+*/
+  ideal_sample_value: number;
 /**
 * @returns {boolean}
 */
@@ -227,8 +246,9 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
-  readonly analyse: (a: number, b: number) => number;
+  readonly analyse: (a: number, b: number, c: number) => number;
   readonly getMedianSmoothed: () => number;
+  readonly getDebug: () => number;
   readonly getThresholded: () => number;
   readonly getBodyShape: () => number;
   readonly getFaceShape: () => number;
@@ -264,6 +284,12 @@ export interface InitOutput {
   readonly __wbg_set_faceinfo_sample_value: (a: number, b: number) => void;
   readonly __wbg_get_faceinfo_sample_temp: (a: number) => number;
   readonly __wbg_set_faceinfo_sample_temp: (a: number, b: number) => void;
+  readonly __wbg_get_faceinfo_ideal_sample_point: (a: number) => number;
+  readonly __wbg_set_faceinfo_ideal_sample_point: (a: number, b: number) => void;
+  readonly __wbg_get_faceinfo_ideal_sample_value: (a: number) => number;
+  readonly __wbg_set_faceinfo_ideal_sample_value: (a: number, b: number) => void;
+  readonly __wbg_get_faceinfo_ideal_sample_temp: (a: number) => number;
+  readonly __wbg_set_faceinfo_ideal_sample_temp: (a: number, b: number) => void;
   readonly __wbg_get_faceinfo_reason: (a: number) => number;
   readonly __wbg_set_faceinfo_reason: (a: number, b: number) => void;
   readonly __wbg_get_point_x: (a: number) => number;

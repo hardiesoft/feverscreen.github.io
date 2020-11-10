@@ -1,4 +1,4 @@
-import {AnalysisResult as WasmAnalysisResult} from "./processing/smooth";
+import {AnalysisResult as WasmAnalysisResult} from "./processing/tko_processing";
 
 export interface Point {
     x: number;
@@ -27,7 +27,9 @@ export enum ScreeningState {
     FRONTAL_LOCK = "FRONTAL_LOCK", // Face is front-on
     STABLE_LOCK = "STABLE_LOCK", // Face has not changed in size or position for a couple of frames.
     MEASURED = "MEASURED", // Temperature snapshot taken, waiting for the person to leave the frame.
-    MISSING_THERMAL_REF = "MISSING_REF"
+    MISSING_THERMAL_REF = "MISSING_REF",
+    BLURRED = "BLURRED",
+    AFTER_FFC_EVENT = "AFTER_FFC_EVENT"
 }
 
 export interface FaceInfo {
@@ -37,6 +39,10 @@ export interface FaceInfo {
     samplePoint: Point;
     sampleValue: number;
     sampleTemp: number;
+
+    idealSamplePoint: Point;
+    idealSampleValue: number;
+    idealSampleTemp: number;
     head: {
         topLeft: Point;
         topRight: Point;
@@ -95,6 +101,12 @@ function getScreeningState(state: number): ScreeningState {
         case 9:
             screeningState = ScreeningState.MISSING_THERMAL_REF;
             break;
+        case 10:
+            screeningState = ScreeningState.BLURRED;
+            break;
+        case 11:
+            screeningState = ScreeningState.AFTER_FFC_EVENT;
+            break;
     }
     return screeningState;
 }
@@ -107,6 +119,7 @@ export function extractFrameInfo(analysisResult: WasmAnalysisResult): AnalysisRe
     const bL = h.bottom_left;
     const bR = h.bottom_right;
     const sP = f.sample_point;
+    const iSP = f.ideal_sample_point;
     const hS = analysisResult.heat_stats;
     const ref = analysisResult.thermal_ref;
     const geom = ref.geom;
@@ -138,6 +151,12 @@ export function extractFrameInfo(analysisResult: WasmAnalysisResult): AnalysisRe
             },
             sampleTemp: f.sample_temp,
             sampleValue: f.sample_value,
+            idealSamplePoint: {
+                x: iSP.x,
+                y: iSP.y
+            },
+            idealSampleTemp: f.ideal_sample_temp,
+            idealSampleValue: f.ideal_sample_value,
             halfwayRatio: f.halfway_ratio,
             isValid: f.is_valid
         },
@@ -172,6 +191,7 @@ export function extractFrameInfo(analysisResult: WasmAnalysisResult): AnalysisRe
     bL.free();
     bR.free();
     sP.free();
+    iSP.free();
     hS.free();
     cP.free();
     geom.free();

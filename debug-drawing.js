@@ -1,11 +1,20 @@
-export function drawBackgroundImage(canvas, data, min, max) {
+export function drawBackgroundImage(canvas, data, min, max, thermalReference) {
+    const thermalReferenceOnLeft = thermalReference.geom.center.x < 60;
+    const thermalReferenceLeft = thermalReferenceOnLeft ? 42 : 0;
+    const thermalReferenceRight = thermalReferenceOnLeft ? 120 : 120 - 42;
     const ctx = canvas.getContext('2d');
     const img = ctx.getImageData(0, 0, 120, 160);
     const imageData = new Uint32Array(img.data.buffer);
     const range = (max - min);
     for (let i = 0; i < data.length; i++) {
-        const v = Math.max(0, Math.min(255, ((data[i] - min) / range) * 255.0));
-        imageData[i] = 0xff << 24 | v << 16 | v << 8 | v;
+        const x = i % 120;
+        if (x >= thermalReferenceLeft && x <= thermalReferenceRight) {
+            const v = Math.max(0, Math.min(255, ((data[i] - min) / range) * 255.0));
+            imageData[i] = 0xff << 24 | v << 16 | v << 8 | v;
+        }
+        else {
+            imageData[i] = 0xff000000;
+        }
     }
     ctx.putImageData(img, 0, 0);
 }

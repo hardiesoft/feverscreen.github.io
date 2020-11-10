@@ -1,8 +1,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
-export function analyse(a: number, b: number): number;
+export function analyse(a: number, b: number, c: number): number;
 export function getMedianSmoothed(): number;
+export function getDebug(): number;
 export function getThresholded(): number;
 export function getBodyShape(): number;
 export function getFaceShape(): number;
@@ -38,6 +39,12 @@ export function __wbg_get_faceinfo_sample_value(a: number): number;
 export function __wbg_set_faceinfo_sample_value(a: number, b: number): void;
 export function __wbg_get_faceinfo_sample_temp(a: number): number;
 export function __wbg_set_faceinfo_sample_temp(a: number, b: number): void;
+export function __wbg_get_faceinfo_ideal_sample_point(a: number): number;
+export function __wbg_set_faceinfo_ideal_sample_point(a: number, b: number): void;
+export function __wbg_get_faceinfo_ideal_sample_value(a: number): number;
+export function __wbg_set_faceinfo_ideal_sample_value(a: number, b: number): void;
+export function __wbg_get_faceinfo_ideal_sample_temp(a: number): number;
+export function __wbg_set_faceinfo_ideal_sample_temp(a: number, b: number): void;
 export function __wbg_get_faceinfo_reason(a: number): number;
 export function __wbg_set_faceinfo_reason(a: number, b: number): void;
 export function __wbg_get_point_x(a: number): number;

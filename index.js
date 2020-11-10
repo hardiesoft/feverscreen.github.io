@@ -17,8 +17,14 @@ import { extractFrameInfo, ScreeningState } from "./extract-frame-info.js";
 //
 // const minFrame = 0;
 // const maxFrame = 40;
-const minFrame = -1;
-const maxFrame = -1;
+// const minFrame: number = 0;
+// const maxFrame: number = 73;
+//"/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv"
+// const minFrame: number = 440;
+// const maxFrame: number = 504;
+const minFrame = 32; //25; //32
+const maxFrame = -1; //150;
+// Side on heads: 601, 635 - 656, 842 - 861, 995 - 1000 (997)
 export const WIDTH = 120;
 export const HEIGHT = 160;
 (async function main() {
@@ -75,8 +81,12 @@ export const HEIGHT = 160;
         //"/cptv-files/bunch of people downstairs walking towards camera 20200812.161144.768.cptv"
         //"/cptv-files/bunch of people in small meeting room 20200812.134427.735.cptv"
         //"/cptv-files/0.7.5beta recording-1 2708.cptv"
+        //"/cptv-files/Slow_to_read_20201022.075606.875[1].cptv",
         "/cptv-files/Missed_Saffy.cptv"
         //"/cptv-files/20200921.155036.812.cptv"
+        //"/cptv-files/20200729.104543.646.cptv",
+        //"/cptv-files/Shaun_hot_-_should_be_36.6_20201014.160228.321[1].cptv",
+        //"/cptv-files/Clare_cold_-_with_hair_on_forehead_-_should_be_36.5_20201014.160445.207[1].cptv"
         //"/cptv-files/20201006.103814.162-obscured-ref.cptv"
         //"/cptv-files/2_people_20200929.151113.294.cptv"
     ];
@@ -161,7 +171,7 @@ async function renderFile(buffer, frameBuffer) {
         const s = performance.now();
         let frame = new Uint16Array(frameBuffer);
         // Now do smoothing...
-        let frameStats = extractFrameInfo(analysis.analyse(frame, 38.5));
+        let frameStats = extractFrameInfo(analysis.analyse(frame, 38.5, frameInfo.time_on - frameInfo.last_ffc_time));
         performance.mark(`end frame ${frameNumber}`);
         performance.measure(`frame ${frameNumber}`, `start frame ${frameNumber}`, `end frame ${frameNumber}`);
         const e = performance.now();
@@ -171,9 +181,9 @@ async function renderFile(buffer, frameBuffer) {
         }
         const skipMissingThermalRefFrames = frameStats.nextState == ScreeningState.MISSING_THERMAL_REF && prevFrameStats.nextState === ScreeningState.MISSING_THERMAL_REF;
         const skipReadyFrames = frameStats.nextState === ScreeningState.READY && prevFrameStats.nextState === ScreeningState.READY;
-        if (skipMissingThermalRefFrames || skipReadyFrames) {
-            continue;
-        }
+        // if (skipMissingThermalRefFrames || skipReadyFrames) {
+        //     continue;
+        // }
         // TODO(jon): Skip all but the first thermal ref, then add a count of how many skipped.
         //  Do the same for READY
         const div = document.createElement("div");
@@ -217,8 +227,8 @@ async function renderFile(buffer, frameBuffer) {
             const imageData = new Uint32Array(img.data.buffer);
             const v = 255;
             for (let i = 0; i < maskData.length; i++) {
-                if (maskData[i] & 1 << 5) {
-                    imageData[i] = 0x66 << 24 | v << 16 | 0 << 8 | 0;
+                if (maskData[i] & 1 << 6) {
+                    imageData[i] = 0xaa << 24 | v << 16 | 0 << 8 | 0;
                 }
             }
             ctx.putImageData(img, 0, 0);
@@ -228,7 +238,7 @@ async function renderFile(buffer, frameBuffer) {
             const img = ctx.getImageData(0, 0, 120, 160);
             const imageData = new Uint32Array(img.data.buffer);
             for (let i = 0; i < maskData.length; i++) {
-                if (maskData[i] & 1 << 7) {
+                if (maskData[i] & 1 << 2) { // 7
                     imageData[i] = 0x33ff00ff;
                 }
             }
@@ -239,7 +249,7 @@ async function renderFile(buffer, frameBuffer) {
             const img = ctx.getImageData(0, 0, 120, 160);
             const imageData = new Uint32Array(img.data.buffer);
             for (let i = 0; i < maskData.length; i++) {
-                if (maskData[i] & 1 << 4) {
+                if (maskData[i] & 1 << 3) {
                     imageData[i] = 0x2200ff00;
                 }
             }
@@ -290,6 +300,7 @@ async function renderFile(buffer, frameBuffer) {
         const neckTopLeft = frameStats.face.head.topLeft;
         const neckTopRight = frameStats.face.head.topRight;
         const samplePoint = frameStats.face.samplePoint;
+        const idealSamplePoint = frameStats.face.idealSamplePoint;
         ctx.lineWidth = 1;
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
         ctx.beginPath();
@@ -308,6 +319,12 @@ async function renderFile(buffer, frameBuffer) {
             ctx.strokeStyle = 'white';
             ctx.beginPath();
             ctx.arc(samplePoint.x, samplePoint.y, 3, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        if (idealSamplePoint.x !== 0) {
+            ctx.strokeStyle = 'yellow';
+            ctx.beginPath();
+            ctx.arc(idealSamplePoint.x, idealSamplePoint.y, 3, 0, Math.PI * 2);
             ctx.stroke();
         }
         ctx.fillStyle = 'green';
@@ -373,7 +390,7 @@ async function renderFile(buffer, frameBuffer) {
             ctx.arc(thermalReference.geom.center.x + 0.5, thermalReference.geom.center.y + 0.5, thermalReference.geom.radius, 0, Math.PI * 2);
             ctx.fill();
         }
-        drawBackgroundImage(backgroundCanvas, prevFrame, frameStats.heatStats.min, frameStats.heatStats.max);
+        drawBackgroundImage(backgroundCanvas, prevFrame, frameStats.heatStats.min, frameStats.heatStats.max, frameStats.thermalRef);
         let output = "";
         if (ii !== frameNumber) {
             output = `#${frameNumber}/(${ii})`;
@@ -382,13 +399,14 @@ async function renderFile(buffer, frameBuffer) {
             output = `#${frameNumber}`;
         }
         if (samplePoint.x !== 0) {
-            output += `<span class="temp">${frameStats.face.sampleTemp.toFixed(2)}&deg;C</span>`;
+            output += `, <span class="temp">${frameStats.face.sampleTemp.toFixed(2)}&deg;C (${(frameStats.face.idealSampleTemp - frameStats.face.sampleTemp).toFixed(2)})diff</span>`;
         }
         output += `<br>Threshold: ${frameStats.heatStats.threshold} / ${(thermalRefC + (frameStats.heatStats.threshold - thermalRefRaw) * 0.01).toFixed(2)}C&deg;<br>Motion: ${frameStats.motionSum}`;
         textState.innerHTML = output;
         // TODO(jon): Output face threshold and inner canthus thresholds
         prevFrameStats = frameStats;
         // console.log(frameNumber, frameStats.heatStats.threshold);
+        frameInfo.free();
         ii++;
     }
     timings.sort((a, b) => {

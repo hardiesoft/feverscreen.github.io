@@ -196,13 +196,15 @@ function addBorrowedObject(obj) {
 /**
 * @param {Uint16Array} input_frame
 * @param {any} calibrated_thermal_ref_temp_c
+* @param {any} ms_since_last_ffc
 * @returns {AnalysisResult}
 */
-export function analyse(input_frame, calibrated_thermal_ref_temp_c) {
+export function analyse(input_frame, calibrated_thermal_ref_temp_c, ms_since_last_ffc) {
     try {
-        var ret = wasm.analyse(addBorrowedObject(input_frame), addBorrowedObject(calibrated_thermal_ref_temp_c));
+        var ret = wasm.analyse(addBorrowedObject(input_frame), addBorrowedObject(calibrated_thermal_ref_temp_c), addBorrowedObject(ms_since_last_ffc));
         return AnalysisResult.__wrap(ret);
     } finally {
+        heap[stack_pointer++] = undefined;
         heap[stack_pointer++] = undefined;
         heap[stack_pointer++] = undefined;
     }
@@ -213,6 +215,14 @@ export function analyse(input_frame, calibrated_thermal_ref_temp_c) {
 */
 export function getMedianSmoothed() {
     var ret = wasm.getMedianSmoothed();
+    return takeObject(ret);
+}
+
+/**
+* @returns {Float32Array}
+*/
+export function getDebug() {
+    var ret = wasm.getDebug();
     return takeObject(ret);
 }
 
@@ -283,7 +293,7 @@ function handleError(f) {
 }
 /**
 */
-export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Measured:8,"8":"Measured",MissingThermalRef:9,"9":"MissingThermalRef", });
+export const ScreeningState = Object.freeze({ WarmingUp:0,"0":"WarmingUp",Ready:1,"1":"Ready",HeadLock:2,"2":"HeadLock",TooFar:3,"3":"TooFar",HasBody:4,"4":"HasBody",FaceLock:5,"5":"FaceLock",FrontalLock:6,"6":"FrontalLock",StableLock:7,"7":"StableLock",Measured:8,"8":"Measured",MissingThermalRef:9,"9":"MissingThermalRef",Blurred:10,"10":"Blurred",AfterFfcEvent:11,"11":"AfterFfcEvent", });
 /**
 */
 export const HeadLockConfidence = Object.freeze({ Bad:0,"0":"Bad",Partial:1,"1":"Partial",Stable:2,"2":"Stable", });
@@ -472,7 +482,7 @@ export class Circle {
     */
     get radius() {
         var ret = wasm.__wbg_get_circle_radius(this.ptr);
-        return ret >>> 0;
+        return ret;
     }
     /**
     * @param {number} arg0
@@ -594,6 +604,48 @@ export class FaceInfo {
     */
     set sample_temp(arg0) {
         wasm.__wbg_set_faceinfo_sample_temp(this.ptr, arg0);
+    }
+    /**
+    * @returns {Point}
+    */
+    get ideal_sample_point() {
+        var ret = wasm.__wbg_get_faceinfo_ideal_sample_point(this.ptr);
+        return Point.__wrap(ret);
+    }
+    /**
+    * @param {Point} arg0
+    */
+    set ideal_sample_point(arg0) {
+        _assertClass(arg0, Point);
+        var ptr0 = arg0.ptr;
+        arg0.ptr = 0;
+        wasm.__wbg_set_faceinfo_ideal_sample_point(this.ptr, ptr0);
+    }
+    /**
+    * @returns {number}
+    */
+    get ideal_sample_value() {
+        var ret = wasm.__wbg_get_faceinfo_ideal_sample_value(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set ideal_sample_value(arg0) {
+        wasm.__wbg_set_faceinfo_ideal_sample_value(this.ptr, arg0);
+    }
+    /**
+    * @returns {number}
+    */
+    get ideal_sample_temp() {
+        var ret = wasm.__wbg_get_faceinfo_ideal_sample_temp(this.ptr);
+        return ret;
+    }
+    /**
+    * @param {number} arg0
+    */
+    set ideal_sample_temp(arg0) {
+        wasm.__wbg_set_faceinfo_ideal_sample_temp(this.ptr, arg0);
     }
     /**
     * @returns {number}
